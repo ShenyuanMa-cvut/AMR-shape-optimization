@@ -12,9 +12,15 @@ class Microstructure():
     """
         Implementation of the optima SDP solution of finte rank laminates that minimizes the complementary energy
     """
-    def __init__(self,d,mu,lmbda,q):
-        self.d = d
-        self.engineer_dim = 6 if d==3 else 3
+    def __init__(self,dim : int, mu : float,lmbda : float,q : int) -> None:
+        """
+            Initialize the microstructure solver.
+            dim : integer, physical dimension of the problem (2 or 3)
+            mu,lmbda : the Lame's moduli of the stiff material
+            q : the total number of applied stresses
+        """
+        self.d = dim
+        self.engineer_dim = 6 if self.d==3 else 3
         self.mu = mu
         self.lmbda = lmbda
         self.q = q
@@ -23,7 +29,7 @@ class Microstructure():
         #SYMPY objects
         self._v = sp.symbols(f'v:{self.d}') # symbolic variable in the sphere
         self._vvec = sp.Matrix(self._v) # column vector of symbolic variables
-        self._basis = sorted(itermonomials(self._v, 4), key=monomial_key('grlex', self._v[::-1]))[monomial_count(d,3):] #basis vector 
+        self._basis = sorted(itermonomials(self._v, 4), key=monomial_key('grlex', self._v[::-1]))[monomial_count(dim,3):] #basis vector 
         
         #CVXPY objects
         self._c = cvx.Variable(shape=(q,),name='c') #complementary energies
@@ -55,7 +61,7 @@ class Microstructure():
         for i in range(self.q):
             self._cons.append(cvx.bmat([[self._c[i].reshape((1,1)),self._tau[i].reshape((1,self.engineer_dim))],[self._tau[i].reshape((self.engineer_dim,1)), self._Fy]]) >> 0)
 
-    def compute_microstructure(self, tau : list[np.ndarray], **kwargs):
+    def compute_microstructure(self, tau : list[np.ndarray], **kwargs) -> tuple[float,np.ndarray,np.ndarray]:
         """
             Compute the optimal complementary energies g(tau) and finite rank hookes law F_Ac
         """
