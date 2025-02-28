@@ -27,13 +27,14 @@ class _AbstractElasticityForm():
         self.edim = 6 if dim == 3 else 3 # dimension of engineering vector
         
         # finite elements
-        self.u_el = element('Lagrange','triangle',1,shape=(self.dim,)) # FE displacement
+        self.u_el = element('Lagrange','triangle',2,shape=(self.dim,)) # FE displacement
+        self.x_el = element('Lagrange','triangle',1,shape=(self.dim,)) # FE space coordinates
         self.A_el = element('Lagrange','triangle',0,shape=(self.edim,self.edim),discontinuous=True) #FE Hooke's law
         self.tau_el = element('Lagrange','triangle',0,shape=(self.edim,),discontinuous=True) #FE stress
         self.theta_el = element('Lagrange','triangle',0,discontinuous=True) #FE density
 
         #abstract mesh representation
-        self.mesh_abs = ufl.Mesh(self.u_el)
+        self.mesh_abs = ufl.Mesh(self.x_el)
         dx = ufl.Measure('dx', self.mesh_abs)
 
         #abstract function spaces
@@ -41,7 +42,7 @@ class _AbstractElasticityForm():
         self.Q = ufl.FunctionSpace(self.mesh_abs,self.A_el)
 
         #abstract form
-        self.u,self.v = ufl.TestFunction(self.V),ufl.TrialFunction(self.V)
+        self.u,self.v = ufl.TrialFunction(self.V),ufl.TestFunction(self.V)
         self.A = ufl.Coefficient(self.Q)
         a = ufl.inner(self.A*_epsilon(self.u,self.dim), _epsilon(self.v,self.dim))*dx
         self.a = dolfinx.fem.compile_form(MPI.COMM_WORLD, a)
