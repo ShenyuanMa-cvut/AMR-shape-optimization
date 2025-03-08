@@ -18,6 +18,23 @@ def _epsilon(v : any ,dim : int):
     elif dim == 3:
         return ufl.as_vector([e[0,0],e[1,1],e[2,2],np.sqrt(2)*e[0,1],np.sqrt(2)*e[0,2],np.sqrt(2)*e[1,2]])
     
+def _interpolate(Vh_to : dolfinx.fem.FunctionSpace, vh_from : dolfinx.fem.Function, match=True) -> dolfinx.fem.Function:
+    """
+    Interpolate the function vh (in Vh_from) to the function space Vh_to. match is True if Vh_to and Vh_from are defined over the same mesh
+    """
+    vh_to = dolfinx.fem.Function(Vh_to)
+    if match:
+        vh_to.interpolate(vh_from)
+    else:
+        mesh_to = Vh_to.mesh
+        dim = mesh_to.topology.dim
+        ncell_to = mesh_to.topology.index_map(dim).size_local
+        cells = np.arange(ncell_to, dtype=np.int32)
+        interp_data = dolfinx.fem.create_interpolation_data(Vh_to,vh_from.function_space,cells)
+        vh_to.interpolate_nonmatching(vh_from,cells,interp_data)
+
+    return vh_to
+
 class _AbstractElasticityForm():
     """
     This class implements the abstract bilinear form int_Omega A e(u):e(v) d x used in the linear elasticity    
@@ -61,13 +78,10 @@ class ElasticitySolver(_AbstractElasticityForm):
         self.vnlocators = vnlocators
         self.loads = loads
 
-    def update_mesh(self, mesh : dolfinx.mesh.Mesh, keep : Optional[bool] = False):
+    def update_mesh(self, mesh : dolfinx.mesh.Mesh):
         """
         Update or assign for the first time the computation mesh        
         """
-        if keep:
-            raise NotImplementedError
-
         self.mesh = mesh
 
         self.dx = ufl.Measure('dx',self.mesh)
@@ -77,15 +91,20 @@ class ElasticitySolver(_AbstractElasticityForm):
         self.Th = dolfinx.fem.functionspace(self.mesh,self.tau_el)
         self.Wh = dolfinx.fem.functionspace(self.mesh,self.theta_el)
 
-        self.Ah = dolfinx.fem.Function(self.Qh)
-        self.thetah = dolfinx.fem.Function(self.Wh)
+        if hasattr(self, 'Ah') and hasattr(self, 'thetah') and hasattr(self,'uhs'):
+            # project functions into the new function spaces
+            self.Ah = _interpolate(self.Qh, self.Ah, False)
+            self.thetah = _interpolate(self.Wh, self.thetah, False)
+            self.uhs = [_interpolate(self.Vh, uh, False) for uh in self.uhs]
+        else:
+            # create functions for the first time
+            self.Ah = dolfinx.fem.Function(self.Qh)
+            self.thetah = dolfinx.fem.Function(self.Wh)
+            self.uhs = [dolfinx.fem.Function(self.Vh) for l in self.loads]
 
-        self.ah = dolfinx.fem.create_form(self.a, [self.Vh,self.Vh], self.mesh,{},{self.A:self.Ah},{})
-        self.uhs = [dolfinx.fem.Function(self.Vh) for l in self.loads]
         self.tauhs = [dolfinx.fem.Function(self.Th) for l in self.loads]
-
         self.tau_exprs = [dolfinx.fem.Expression(self.Ah*_epsilon(uh,self.dim), self.Th.element.interpolation_points()) for uh in self.uhs]
-
+        self.ah = dolfinx.fem.create_form(self.a, [self.Vh,self.Vh], self.mesh,{},{self.A:self.Ah},{})
         self._build_problems()
 
     def solve_all(self):
@@ -126,3 +145,5 @@ class ElasticitySolver(_AbstractElasticityForm):
                 )
             )
         
+    def compute_indicator(self):
+        pass
