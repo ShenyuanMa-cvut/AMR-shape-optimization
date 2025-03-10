@@ -1,4 +1,4 @@
-from _interpolation_helper import _MeshHelper,_AdjHelper,_quad_interp
+from ._interpolation_helper import _MeshHelper,_AdjHelper,_quad_interp
 import dolfinx
 import numpy as np
 
@@ -38,6 +38,5 @@ def local_quad_interpolation_cy(vh:dolfinx.fem.Function):
     tab = Th.tabulate_dof_coordinates()
 
     th = dolfinx.fem.Function(Th)
-    th.x.array = _quad_interp(vh.x.array, tab, m)
-
+    th.x.array[:] = _quad_interp(vh.x.array, tab, m)
     return th

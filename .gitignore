@@ -1,2 +1,7 @@
 /*.egg-info
 *.pyc
+build
+AMR_TO/*.c
+AMR_TO/*.cpp
+AMR_TO/*.so
+AMR_TO/*.html

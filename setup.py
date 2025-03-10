@@ -1,8 +1,7 @@
-import dolfinx.cpp
 from setuptools import setup,Extension
 from Cython.Build import cythonize
 import numpy as np
-import dolfinx
+import scipy.linalg as spl
 
 ext = [
     Extension(
