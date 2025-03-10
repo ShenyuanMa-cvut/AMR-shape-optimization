@@ -152,9 +152,7 @@ cdef void _compute_virtual_points(int e, _MeshHelper m,
             node_op.clear()
 
 cdef set[NP_INT] _collect_nodes(set[NP_INT] patch, _MeshHelper m):
-    """
-        Collect all the node if contained in the patch of cells
-    """
+    #Collect all the node if contained in the patch of cells
     cdef set[NP_INT] nodes
     cdef Py_ssize_t e
     cdef Py_ssize_t n
@@ -168,6 +166,12 @@ cdef _Vandermonde(NP_FLOAT[:,:] pts):
     cdef Py_ssize_t _i,_j
     return np.array([[p[0]**2, p[1]**2, p[0] * p[1], p[0], p[1], 1] for p in pts])
 
+cdef _compute_coefficient(NP_FLOAT[:,:] pts, NP_FLOAT[:] val, NP_FLOAT[:] coeff):
+    pass
+
+cdef _find_dof(NP_FLOAT[:,:] tab, NP_FLOAT[:] coeff, NP_FLOAT[:] dof):
+    pass
+
 cdef void _recenter(NP_FLOAT[:,:] pts, NP_FLOAT[:] p0, NP_FLOAT h, NP_FLOAT[:,:] res):
     cdef Py_ssize_t _i,_j
     for _i in range(6):
@@ -180,15 +184,16 @@ cdef _interp_on_cells(Py_ssize_t e,
                     _MeshHelper m,
                     NP_FLOAT[:] dof):
     
-    cdef NP_FLOAT[6] v_e_array
+    cdef NP_FLOAT[6] v_e_array, coeff_e_array
     cdef NP_FLOAT[6][3] pts_e_array,pts_T_array,tab_T_arrar #recentered array
     
     cdef NP_FLOAT[:] v_e = v_e_array
+    cdef NP_FLOAT[:] coeff_e = coeff_e_array
+
     cdef NP_FLOAT[:,:] pts_e = pts_e_array
     cdef NP_FLOAT[:,:] pts_T = pts_T_array
     cdef NP_FLOAT[:,:] tab_T = tab_T_arrar
 
-    cdef NP_FLOAT[:] dof_e
     cdef NP_FLOAT h_e = m.h[e]
     cdef Py_ssize_t ne = 0 #local node index
     cdef Py_ssize_t ng,_k,_i,_j
@@ -202,35 +207,32 @@ cdef _interp_on_cells(Py_ssize_t e,
             pts_e[ne,_k] = m.x[ng,_k]
         ne += 1
 
-    if nodes.size() < 6:
-        #compute virtual points and start inserting at ne
-        _compute_virtual_points(e, m, vh, v_e[ne:], pts_e[ne:,:]) 
+    if nodes.size() < 6:#compute virtual points and start inserting at ne
+        _compute_virtual_points(e, m, vh, v_e[ne:], pts_e[ne:,:])
     
-    _recenter(pts_e,tab[6*e,:],h_e,pts_T)
-    _recenter(tab[6*e:6*(e+1),:],tab[6*e,:],h_e,tab_T)
+    _recenter(pts_e,tab[6*e,:],h_e,pts_T) #recenter the interp point to the reference cell
+    _recenter(tab[6*e:6*(e+1),:],tab[6*e,:],h_e,tab_T) #recenter the tabulation point to the reference cell
 
-    Ve = _Vandermonde(pts_T)
-    Vtab = _Vandermonde(tab_T)
-
-    dof_e = Vtab@np.linalg.lstsq(Ve, v_e)[0].reshape(-1)
-
-    for _k in range(6):
-        dof[6*e+_k] = dof_e[_k]
+    _compute_coefficient(pts_T, v_e, coeff_e) #compute the interpolating coefficients 
+    _find_dof(tab_T, coeff_e, dof[6*e:6*e+6]) #compute the dof's
 
 @cython.boundscheck(False)  # Deactivate bounds checking
 @cython.wraparound(False)   # Deactivate negative indexing.
-def _quad_interp(np.ndarray[NP_FLOAT,ndim=1] vh, 
-                np.ndarray[NP_FLOAT,ndim=2] tab,
+def _quad_interp(np.ndarray[NP_FLOAT,ndim=1] vh_array, 
+                np.ndarray[NP_FLOAT,ndim=2] tab_array,
                 _MeshHelper m):
 
     cdef Py_ssize_t e = 0
-    cdef int ncells = m.ncells
-    cdef np.ndarray[NP_FLOAT] dof = np.zeros((6*m.ncells,), dtype=np.float64)
+    cdef Py_ssize_t ncells = m.ncells
+    cdef np.ndarray[NP_FLOAT] dof_array = np.zeros((6*m.ncells,), dtype=np.float64)
+    cdef NP_FLOAT[:] dof = dof_array
+    cdef NP_FLOAT[:] vh = vh_array
+    cdef NP_FLOAT[:,:] tab = tab_array
 
     for e in range(ncells):
         _interp_on_cells(e, vh, tab, m, dof)
 
-    return dof
+    return dof_array
 
 
 
