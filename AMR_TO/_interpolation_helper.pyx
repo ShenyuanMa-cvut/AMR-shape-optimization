@@ -5,23 +5,25 @@ from libcpp.set cimport set
 
 from libcpp.iterator cimport insert_iterator
 
-cdef extern from "<iterator>" namespace "std":
+cdef extern from "<iterator>" namespace "std" nogil:
     insert_iterator[set[int]] inserter(set[int]& container, set[int].iterator pos)
 
 cdef extern from "<algorithm>" namespace "std" nogil:
     OutputIt set_difference[InputIt1, InputIt2, OutputIt](
         InputIt1 first1, InputIt1 last1, InputIt2 first2, InputIt2 last2, OutputIt out) except +
 
-import cython
+from cython.parallel cimport prange
 from cython.operator cimport dereference as deref, preincrement as inc
 
 import numpy as np
 cimport numpy as np
 
-from scipy.linalg.cython_lapack cimport dgelsd
+from scipy.linalg.cython_lapack cimport dgels
 
 ctypedef np.int32_t NP_INT
 ctypedef np.float64_t NP_FLOAT
+
+
 
 cdef class _AdjHelper():
     cdef readonly int[:] _array
@@ -93,9 +95,7 @@ cdef void _set_2_list(set[int] A, int * L):
 
 
 cdef set[NP_INT] _get_patch_cells(Py_ssize_t e, _MeshHelper m):
-    """
-        Collect the patch of cells surrounding e, this includes e
-    """
+    #Collect the patch of cells surrounding e, this includes e
     cdef set[NP_INT] patch
     cdef Py_ssize_t ee
     cdef Py_ssize_t f
@@ -109,9 +109,8 @@ cdef void _compute_virtual_points(int e, _MeshHelper m,
                             NP_FLOAT[:] vh, 
                             NP_FLOAT[:] v_e, 
                             NP_FLOAT[:,:] pts_e):
-    """
-        Compute the virtual points associated to cell e
-    """
+    #Compute the virtual points associated to cell e
+    
     cdef _AdjHelper c2f = m.c2f
     cdef _AdjHelper f2c = m.f2c
     cdef _AdjHelper c2n = m.c2n
@@ -162,15 +161,69 @@ cdef set[NP_INT] _collect_nodes(set[NP_INT] patch, _MeshHelper m):
             nodes.insert(n)
     return nodes
 
-cdef _Vandermonde(NP_FLOAT[:,:] pts):
+cdef void _Vandermonde(NP_FLOAT[:,:] pts, NP_FLOAT[:,:] V): #create the Vandermonde matrix
+    cdef Py_ssize_t _i
+    cdef Py_ssize_t N = pts.shape[0] #number of points
+    cdef NP_FLOAT x,y
+
+    for _i in range(N):
+        x = pts[_i,0]
+        y = pts[_i,1]
+        V[_i,0] = x*x
+        V[_i,1] = y*y
+        V[_i,2] = x*y
+        V[_i,3] = x
+        V[_i,4] = y
+        V[_i,5] = 1.0
+
+cdef void _least_square(NP_FLOAT[:,:] A, NP_FLOAT[:] b, NP_FLOAT[:] res): #here I always solve 6 by 6 system
+    cdef NP_FLOAT[6*6] a_flat
+    cdef NP_FLOAT[6] b_flat
+    cdef int _i,_j
+
+    cdef char trans = b'N'
+    cdef int m = A.shape[0]
+    cdef int n = A.shape[1]
+    cdef int nrhs = 1
+    cdef int lda = max(1, m)
+    cdef int ldb = max(m, n)
+    cdef int info
+    
+    # work space
+    cdef int lwork = 64
+    cdef NP_FLOAT[64] work
+
+
+    #get A,b into Fortran format
+    for _j in range(6):
+        for _i in range(6):
+            a_flat[6*_j+_i] = A[_i,_j]
+        b_flat[_j] = b[_j]
+
+    dgels(&trans, &m, &n, &nrhs, &a_flat[0], &lda, &b_flat[0], &ldb, &work[0], &lwork, &info)
+
+    for _i in range(6):
+        res[_i] = b_flat[_i]
+
+cdef void _compute_coefficient(NP_FLOAT[:,:] pts, NP_FLOAT[:] val, NP_FLOAT[:] coeff):
+    cdef NP_FLOAT[6][6] V_array
+    cdef NP_FLOAT[:,:] V = V_array
+
+    _Vandermonde(pts, V)
+    _least_square(V, val, coeff)
+
+cdef void _find_dof(NP_FLOAT[:,:] tab, NP_FLOAT[:] coeff, NP_FLOAT[:] dof):
+    cdef NP_FLOAT[6][6] V_array
+    cdef NP_FLOAT[:,:] V = V_array
+    cdef NP_FLOAT s = 0.
     cdef Py_ssize_t _i,_j
-    return np.array([[p[0]**2, p[1]**2, p[0] * p[1], p[0], p[1], 1] for p in pts])
-
-cdef _compute_coefficient(NP_FLOAT[:,:] pts, NP_FLOAT[:] val, NP_FLOAT[:] coeff):
-    pass
-
-cdef _find_dof(NP_FLOAT[:,:] tab, NP_FLOAT[:] coeff, NP_FLOAT[:] dof):
-    pass
+    
+    _Vandermonde(tab, V)
+    for _i in range(6):
+        for _j in range(6):
+            s += V[_i,_j]*coeff[_j]
+        dof[_i] = s
+        s = 0.
 
 cdef void _recenter(NP_FLOAT[:,:] pts, NP_FLOAT[:] p0, NP_FLOAT h, NP_FLOAT[:,:] res):
     cdef Py_ssize_t _i,_j
@@ -178,7 +231,7 @@ cdef void _recenter(NP_FLOAT[:,:] pts, NP_FLOAT[:] p0, NP_FLOAT h, NP_FLOAT[:,:]
         for _j in range(3):
             res[_i,_j] = (pts[_i,_j]-p0[_j])/h
 
-cdef _interp_on_cells(Py_ssize_t e,
+cdef void _interp_on_cells(Py_ssize_t e,
                     NP_FLOAT[:] vh,
                     NP_FLOAT[:,:] tab,
                     _MeshHelper m,
@@ -216,8 +269,8 @@ cdef _interp_on_cells(Py_ssize_t e,
     _compute_coefficient(pts_T, v_e, coeff_e) #compute the interpolating coefficients 
     _find_dof(tab_T, coeff_e, dof[6*e:6*e+6]) #compute the dof's
 
-@cython.boundscheck(False)  # Deactivate bounds checking
-@cython.wraparound(False)   # Deactivate negative indexing.
+# @cython.boundscheck(False)  # Deactivate bounds checking
+# @cython.wraparound(False)   # Deactivate negative indexing.
 def _quad_interp(np.ndarray[NP_FLOAT,ndim=1] vh_array, 
                 np.ndarray[NP_FLOAT,ndim=2] tab_array,
                 _MeshHelper m):
