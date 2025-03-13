@@ -44,7 +44,7 @@ class _AbstractElasticityForm():
         self.edim = 6 if dim == 3 else 3 # dimension of engineering vector
         
         # finite elements
-        self.u_el = element('Lagrange','triangle',2,shape=(self.dim,)) # FE displacement
+        self.u_el = element('Lagrange','triangle',1,shape=(self.dim,)) # FE displacement
         self.x_el = element('Lagrange','triangle',1,shape=(self.dim,)) # FE space coordinates
         self.A_el = element('Lagrange','triangle',0,shape=(self.edim,self.edim),discontinuous=True) #FE Hooke's law
         self.tau_el = element('Lagrange','triangle',0,shape=(self.edim,),discontinuous=True) #FE stress

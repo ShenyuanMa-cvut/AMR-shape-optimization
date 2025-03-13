@@ -1,8 +1,8 @@
 # distutils: language=c++
 # cython: language_level=3
+# cython: boundscheck=False,wraparound=False
 
 from libcpp.set cimport set
-
 from libcpp.iterator cimport insert_iterator
 
 cdef extern from "<iterator>" namespace "std" nogil:
@@ -12,7 +12,6 @@ cdef extern from "<algorithm>" namespace "std" nogil:
     OutputIt set_difference[InputIt1, InputIt2, OutputIt](
         InputIt1 first1, InputIt1 last1, InputIt2 first2, InputIt2 last2, OutputIt out) except +
 
-from cython.parallel cimport prange
 from cython.operator cimport dereference as deref, preincrement as inc
 
 import numpy as np
@@ -22,8 +21,6 @@ from scipy.linalg.cython_lapack cimport dgels
 
 ctypedef np.int32_t NP_INT
 ctypedef np.float64_t NP_FLOAT
-
-
 
 cdef class _AdjHelper():
     cdef readonly int[:] _array
@@ -269,8 +266,6 @@ cdef void _interp_on_cells(Py_ssize_t e,
     _compute_coefficient(pts_T, v_e, coeff_e) #compute the interpolating coefficients 
     _find_dof(tab_T, coeff_e, dof[6*e:6*e+6]) #compute the dof's
 
-# @cython.boundscheck(False)  # Deactivate bounds checking
-# @cython.wraparound(False)   # Deactivate negative indexing.
 def _quad_interp(np.ndarray[NP_FLOAT,ndim=1] vh_array, 
                 np.ndarray[NP_FLOAT,ndim=2] tab_array,
                 _MeshHelper m):
