@@ -1,6 +1,6 @@
 # distutils: language=c++
 # cython: language_level=3
-# cython: boundscheck=False,wraparound=False
+# cython: boundscheck=False,wraparound=False, nonecheck=False
 
 from libcpp.set cimport set
 from libcpp.iterator cimport insert_iterator
@@ -14,7 +14,6 @@ cdef extern from "<algorithm>" namespace "std" nogil:
 
 from cython.operator cimport dereference as deref, preincrement as inc
 cimport cython
-from cython.parallel cimport prange
 
 import numpy as np
 cimport numpy as np
@@ -77,7 +76,7 @@ cdef class _MeshHelper():
         self.c2n = c2n
         self.f2n = f2n
 
-cdef set[int] _libcpp_set_difference(set[int] A, set[int] B) :
+cdef set[int] _libcpp_set_difference(set[int] A, set[int] B) nogil:
     """
     Return a new set[int] that is A \ B using std::set_difference.
     A and B must be sorted containers (true for std::set).
@@ -86,7 +85,7 @@ cdef set[int] _libcpp_set_difference(set[int] A, set[int] B) :
     set_difference(A.begin(), A.end(), B.begin(), B.end(), inserter(result, result.begin()))
     return result
 
-cdef void _set_2_list(set[int] A, int * L) :
+cdef void _set_2_list(set[int] A, int * L) nogil:
     cdef set[int].iterator it = A.begin()
     cdef Py_ssize_t _i = 0
 
@@ -95,8 +94,7 @@ cdef void _set_2_list(set[int] A, int * L) :
         _i += 1
         inc(it)
 
-
-cdef set[NP_INT] _get_patch_cells(Py_ssize_t e, _MeshHelper m) :
+cdef set[NP_INT] _get_patch_cells(Py_ssize_t e, _MeshHelper m) nogil:
     #Collect the patch of cells surrounding e, this includes e
     cdef set[NP_INT] patch
     cdef Py_ssize_t ee
@@ -110,7 +108,7 @@ cdef set[NP_INT] _get_patch_cells(Py_ssize_t e, _MeshHelper m) :
 cdef void _compute_virtual_points(int e, _MeshHelper m, 
                             NP_FLOAT[:] vh, 
                             NP_FLOAT* v_e, 
-                            NP_FLOAT* pts_e) :
+                            NP_FLOAT* pts_e) nogil:
     #Compute the virtual points associated to cell e
     
     cdef set[int] nodes_e,nodes_f,node_op
@@ -148,7 +146,7 @@ cdef void _compute_virtual_points(int e, _MeshHelper m,
             nodes_f.clear()
             node_op.clear()
 
-cdef set[NP_INT] _collect_nodes(set[NP_INT] patch, _MeshHelper m) :
+cdef set[NP_INT] _collect_nodes(set[NP_INT] patch, _MeshHelper m) nogil:
     #Collect all the node if contained in the patch of cells
     cdef set[NP_INT] nodes
     cdef Py_ssize_t e
@@ -159,7 +157,7 @@ cdef set[NP_INT] _collect_nodes(set[NP_INT] patch, _MeshHelper m) :
             nodes.insert(n)
     return nodes
 
-cdef void _Vandermonde(NP_FLOAT* pts, NP_FLOAT* V, Py_ssize_t N, Py_ssize_t stride_row, Py_ssize_t stride_col) : #create the Vandermonde matrix
+cdef void _Vandermonde(NP_FLOAT* pts, NP_FLOAT* V, Py_ssize_t N, Py_ssize_t stride_row, Py_ssize_t stride_col) nogil: #create the Vandermonde matrix
     cdef Py_ssize_t _i,idx
     cdef NP_FLOAT x,y
 
@@ -175,7 +173,7 @@ cdef void _Vandermonde(NP_FLOAT* pts, NP_FLOAT* V, Py_ssize_t N, Py_ssize_t stri
         V[idx+4*stride_col] = y
         V[idx+5*stride_col] = 1.0
 
-cdef void _least_square(NP_FLOAT* A, NP_FLOAT* b, NP_FLOAT* res, int nrow, int ncol, int stride_row, int stride_col) : #here I always solve 6 by 6 system
+cdef void _least_square(NP_FLOAT* A, NP_FLOAT* b, NP_FLOAT* res, int nrow, int ncol, int stride_row, int stride_col) nogil: #here I always solve 6 by 6 system
     cdef NP_FLOAT[6*6] a_flat
     cdef NP_FLOAT[6] b_flat
     cdef int _i,_j
@@ -204,13 +202,13 @@ cdef void _least_square(NP_FLOAT* A, NP_FLOAT* b, NP_FLOAT* res, int nrow, int n
     for _i in range(6):
         res[_i] = b_flat[_i]
 
-cdef void _compute_coefficient(NP_FLOAT* pts, NP_FLOAT* val, NP_FLOAT* coeff):
+cdef void _compute_coefficient(NP_FLOAT* pts, NP_FLOAT* val, NP_FLOAT* coeff) nogil:
     cdef NP_FLOAT[6][6] V_array
 
     _Vandermonde(pts, &V_array[0][0], 6, 6, 1)
     _least_square(&V_array[0][0], val, coeff, 6, 6, 6, 1)
 
-cdef void _find_dof(NP_FLOAT* tab, NP_FLOAT* coeff, NP_FLOAT[:] dof):
+cdef void _find_dof(NP_FLOAT* tab, NP_FLOAT* coeff, NP_FLOAT[:] dof) nogil:
     cdef NP_FLOAT[6][6] V_array
 
     cdef NP_FLOAT s = 0.
@@ -223,7 +221,7 @@ cdef void _find_dof(NP_FLOAT* tab, NP_FLOAT* coeff, NP_FLOAT[:] dof):
         dof[_i] = s
         s = 0.
 
-cdef void _recenter(NP_FLOAT* pts, NP_FLOAT* p0, NP_FLOAT h, NP_FLOAT* res):
+cdef void _recenter(NP_FLOAT* pts, NP_FLOAT* p0, NP_FLOAT h, NP_FLOAT* res) nogil:
     cdef Py_ssize_t _i,_j
     for _i in range(6):
         for _j in range(3):
@@ -233,7 +231,7 @@ cdef void _interp_on_cells(Py_ssize_t e,
                     NP_FLOAT[:] vh,
                     NP_FLOAT* tab,
                     _MeshHelper m,
-                    NP_FLOAT[:] dof):
+                    NP_FLOAT[:] dof) noexcept nogil:
     
     cdef NP_FLOAT[6] v_e_array, coeff_e_array
     cdef NP_FLOAT[6][3] pts_e_array,pts_T_array,tab_T_arrar #recentered array
