@@ -14,6 +14,7 @@ cdef extern from "<algorithm>" namespace "std" nogil:
 
 from cython.operator cimport dereference as deref, preincrement as inc
 cimport cython
+from cython.parallel cimport prange
 
 import numpy as np
 cimport numpy as np
@@ -108,8 +109,8 @@ cdef set[NP_INT] _get_patch_cells(Py_ssize_t e, _MeshHelper m) :
     
 cdef void _compute_virtual_points(int e, _MeshHelper m, 
                             NP_FLOAT[:] vh, 
-                            NP_FLOAT[:] v_e, 
-                            NP_FLOAT[:,:] pts_e) :
+                            NP_FLOAT* v_e, 
+                            NP_FLOAT* pts_e) :
     #Compute the virtual points associated to cell e
     
     cdef set[int] nodes_e,nodes_f,node_op
@@ -141,7 +142,7 @@ cdef void _compute_virtual_points(int e, _MeshHelper m,
             v_e[ne] = vh[nodes_f_l[0]]+vh[nodes_f_l[1]]-vh[node_op_l[0]]
             
             for _k in range(3):
-                pts_e[ne,_k] = x[nodes_f_l[0],_k] + x[nodes_f_l[1],_k] - x[node_op_l[0],_k]
+                pts_e[3*ne+_k] = x[nodes_f_l[0],_k] + x[nodes_f_l[1],_k] - x[node_op_l[0],_k]
 
             ne += 1
             nodes_f.clear()
@@ -158,14 +159,13 @@ cdef set[NP_INT] _collect_nodes(set[NP_INT] patch, _MeshHelper m) :
             nodes.insert(n)
     return nodes
 
-cdef void _Vandermonde(NP_FLOAT[:,:] pts, NP_FLOAT* V, Py_ssize_t stride_row, Py_ssize_t stride_col) : #create the Vandermonde matrix
+cdef void _Vandermonde(NP_FLOAT* pts, NP_FLOAT* V, Py_ssize_t N, Py_ssize_t stride_row, Py_ssize_t stride_col) : #create the Vandermonde matrix
     cdef Py_ssize_t _i,idx
-    cdef Py_ssize_t N = pts.shape[0] #number of points
     cdef NP_FLOAT x,y
 
     for _i in range(N):
-        x = pts[_i,0]
-        y = pts[_i,1]
+        x = pts[3*_i+0]
+        y = pts[3*_i+1]
 
         idx = _i*stride_row
         V[idx+0*stride_col] = x*x
@@ -175,7 +175,7 @@ cdef void _Vandermonde(NP_FLOAT[:,:] pts, NP_FLOAT* V, Py_ssize_t stride_row, Py
         V[idx+4*stride_col] = y
         V[idx+5*stride_col] = 1.0
 
-cdef void _least_square(NP_FLOAT* A, NP_FLOAT[:] b, NP_FLOAT[:] res, int nrow, int ncol, int stride_row, int stride_col) : #here I always solve 6 by 6 system
+cdef void _least_square(NP_FLOAT* A, NP_FLOAT* b, NP_FLOAT* res, int nrow, int ncol, int stride_row, int stride_col) : #here I always solve 6 by 6 system
     cdef NP_FLOAT[6*6] a_flat
     cdef NP_FLOAT[6] b_flat
     cdef int _i,_j
@@ -204,46 +204,47 @@ cdef void _least_square(NP_FLOAT* A, NP_FLOAT[:] b, NP_FLOAT[:] res, int nrow, i
     for _i in range(6):
         res[_i] = b_flat[_i]
 
-cdef void _compute_coefficient(NP_FLOAT[:,:] pts, NP_FLOAT[:] val, NP_FLOAT[:] coeff):
+cdef void _compute_coefficient(NP_FLOAT* pts, NP_FLOAT* val, NP_FLOAT* coeff):
     cdef NP_FLOAT[6][6] V_array
 
-    _Vandermonde(pts, &V_array[0][0], 6, 1)
+    _Vandermonde(pts, &V_array[0][0], 6, 6, 1)
     _least_square(&V_array[0][0], val, coeff, 6, 6, 6, 1)
 
-cdef void _find_dof(NP_FLOAT[:,:] tab, NP_FLOAT[:] coeff, NP_FLOAT[:] dof):
+cdef void _find_dof(NP_FLOAT* tab, NP_FLOAT* coeff, NP_FLOAT[:] dof):
     cdef NP_FLOAT[6][6] V_array
 
     cdef NP_FLOAT s = 0.
     cdef Py_ssize_t _i,_j
     
-    _Vandermonde(tab, &V_array[0][0], 6, 1)
+    _Vandermonde(tab, &V_array[0][0], 6, 6, 1)
     for _i in range(6):
         for _j in range(6):
             s += V_array[_i][_j]*coeff[_j]
         dof[_i] = s
         s = 0.
 
-cdef void _recenter(NP_FLOAT[:,:] pts, NP_FLOAT[:] p0, NP_FLOAT h, NP_FLOAT[:,:] res):
+cdef void _recenter(NP_FLOAT* pts, NP_FLOAT* p0, NP_FLOAT h, NP_FLOAT* res):
     cdef Py_ssize_t _i,_j
     for _i in range(6):
         for _j in range(3):
-            res[_i,_j] = (pts[_i,_j]-p0[_j])/h
+            res[3*_i+_j] = (pts[3*_i+_j]-p0[_j])/h
 
 cdef void _interp_on_cells(Py_ssize_t e,
                     NP_FLOAT[:] vh,
-                    NP_FLOAT[:,:] tab,
+                    NP_FLOAT* tab,
                     _MeshHelper m,
                     NP_FLOAT[:] dof):
     
     cdef NP_FLOAT[6] v_e_array, coeff_e_array
     cdef NP_FLOAT[6][3] pts_e_array,pts_T_array,tab_T_arrar #recentered array
     
-    cdef NP_FLOAT[:] v_e = v_e_array
-    cdef NP_FLOAT[:] coeff_e = coeff_e_array
+    cdef NP_FLOAT* v_e = &v_e_array[0]
+    cdef NP_FLOAT* coeff_e = &coeff_e_array[0]
+    cdef NP_FLOAT* tab_e = &tab[6*3*e]
 
-    cdef NP_FLOAT[:,:] pts_e = pts_e_array
-    cdef NP_FLOAT[:,:] pts_T = pts_T_array
-    cdef NP_FLOAT[:,:] tab_T = tab_T_arrar
+    cdef NP_FLOAT* pts_e = &pts_e_array[0][0]
+    cdef NP_FLOAT* pts_T = &pts_T_array[0][0]
+    cdef NP_FLOAT* tab_T = &tab_T_arrar[0][0]
 
     cdef NP_FLOAT h_e = m.h[e]
     cdef Py_ssize_t ne = 0 #local node index
@@ -255,14 +256,14 @@ cdef void _interp_on_cells(Py_ssize_t e,
     for ng in nodes: # for physical nodes, collect dof vh and interpolation points
         v_e[ne] = vh[ng]
         for _k in range(3):
-            pts_e[ne,_k] = m.x[ng,_k]
+            pts_e[3*ne+_k] = m.x[ng,_k]
         ne += 1
 
     if nodes.size() < 6:#compute virtual points and start inserting at ne
-        _compute_virtual_points(e, m, vh, v_e[ne:], pts_e[ne:,:])
+        _compute_virtual_points(e, m, vh, &v_e[ne], &pts_e[3*ne])
     
-    _recenter(pts_e,tab[6*e,:],h_e,pts_T) #recenter the interp point to the reference cell
-    _recenter(tab[6*e:6*(e+1),:],tab[6*e,:],h_e,tab_T) #recenter the tabulation point to the reference cell
+    _recenter(pts_e,tab_e,h_e,pts_T) #recenter the interp point to the reference cell
+    _recenter(tab_e,tab_e,h_e,tab_T) #recenter the tabulation point to the reference cell
 
     _compute_coefficient(pts_T, v_e, coeff_e) #compute the interpolating coefficients 
     _find_dof(tab_T, coeff_e, dof[6*e:6*e+6]) #compute the dof's
@@ -276,7 +277,7 @@ def _quad_interp(np.ndarray[NP_FLOAT,ndim=1] vh_array,
     cdef np.ndarray[NP_FLOAT] dof_array = np.zeros((6*m.ncells,), dtype=np.float64)
     cdef NP_FLOAT[:] dof = dof_array
     cdef NP_FLOAT[:] vh = vh_array
-    cdef NP_FLOAT[:,:] tab = tab_array
+    cdef NP_FLOAT* tab = &tab_array[0,0]
 
     for e in range(ncells):
         _interp_on_cells(e, vh, tab, m, dof)
