@@ -1,5 +1,6 @@
+import basix.ufl
 from ._interpolation_helper import _MeshHelper,_AdjHelper,_quad_interp
-import dolfinx,ufl
+import dolfinx,ufl,basix
 import numpy as np
 import scipy.sparse as scs
 import cvxpy as cvx
@@ -25,11 +26,22 @@ def _get_patch_cells(e:int, mesh:dolfinx.mesh.Mesh)->list[int]:
 
 
 def local_quad_interpolation_cy(vh:dolfinx.fem.Function):
+    """
+        Assuming vh to be a ('CG',1) function. Find the th discontinuous ('DG',2) function that locally interpolates vh : 
+        1. For each interior triangle T, th interpolates vh at the three nodes and the other three nodes of the 3 neighbor triangles
+        2. For each triangle having at least one exterior edge, we extend virtually the triangle to the exterior of the mesh by applying central symmetry to the opposite node of each exterior edge with respect to the mid point of the exterior edge and we extend linearly vh outside of the mesh
+    """
     Vh = vh.function_space
     mesh = Vh.mesh
     dim = mesh.topology.dim
     fdim = dim-1
 
+    shape = vh.ufl_shape
+    symm = Vh.ufl_element().is_symmetric
+    num_sub_spaces = Vh.num_sub_spaces
+    
+
+    # initialize mesh helper
     mesh.topology.create_connectivity(dim,fdim)
     mesh.topology.create_connectivity(fdim,dim)
     mesh.topology.create_connectivity(dim,0)
@@ -55,12 +67,24 @@ def local_quad_interpolation_cy(vh:dolfinx.fem.Function):
                 f2c_helper,
                 c2n_helper,
                 f2n_helper)
+    
+    if len(shape)==2 and shape[0]==shape[1]:
+        DG2 = basix.ufl.element('DG',mesh.basix_cell(),2,discontinuous=True,shape=shape,symmetry=symm)
+    else:
+        DG2 = basix.ufl.element('DG',mesh.basix_cell(),2,discontinuous=True,shape=shape)
 
-    Th = dolfinx.fem.functionspace(mesh, ('DG',2))
+    Th = dolfinx.fem.functionspace(mesh, DG2)
     tab = Th.tabulate_dof_coordinates()
-
     th = dolfinx.fem.Function(Th)
-    th.x.array[:] = _quad_interp(vh.x.array, tab, m)
+
+    if num_sub_spaces > 0: # if Vh is a vector valued space
+        for i in range(num_sub_spaces): #for each subspace
+            _,dof_u = Vh.sub(i).collapse()
+            _,dof_t = Th.sub(i).collapse()
+            th.x.array[dof_t] = _quad_interp(vh.x.array[dof_u], tab, m)
+    else:
+        th.x.array[:] = _quad_interp(vh.x.array, tab, m)
+    
     return th
 
 def averaging_kernel(mesh:dolfinx.mesh.Mesh)->scs.csc_matrix:
@@ -68,10 +92,16 @@ def averaging_kernel(mesh:dolfinx.mesh.Mesh)->scs.csc_matrix:
         Construct an averaging kernel over the mesh (applied to DG0 functions). The averaging kernel A satisfies the following properties:
         1. is linear
         2. Let th be a (DG0) function and the function A@th (averaged function):
-            preserves the integral
-            preserves bounds (if a<=th<=b cellwise then a<= A@th <= b)
+            preserves the integral : \int th dx = \int A@th dx 
+            preserves bounds : if a<=th<=b cellwise then a<= A@th <= b
+        3. is local :
+            Consider the averaged value [A@th]_i = \sum_{j} A_{ij} th_j and A_{ij} is nonzero 0 iff cell i and cell j are neighbors
 
-        We find such A by solving a convex optimization problem.
+        let T_i be the area of the cell i then 
+            2.1 is equivalent to \sum_i A_{ij} T_i = T_j \forall j (the vector of cell areas is a left eigenvector of A)
+            2.2 is implied by A_ij being non zero and being a partition of unity : \sum_j A_ij = 1 \forall i
+
+        We find such A by solving a convex optimization problem. Indeed, if A is the identity then this is trivially a working averaging operator but this is clearly not satisfactory. We choose to minimize \sum_ij A_ij^2 (This choice is arbitrary).
     """
     dim = mesh.topology.dim
     fdim = dim - 1
@@ -107,7 +137,7 @@ def averaging_kernel(mesh:dolfinx.mesh.Mesh)->scs.csc_matrix:
     cons = [p==0 for p in partition_unity]+[p==0 for p in preserve_integral]+[omega_e>=0.]+[omega_f>=0.]
     obj = cvx.Minimize(cvx.norm2(omega_e)**2+cvx.norm2(omega_f.reshape(-1))**2)
     prob = cvx.Problem(obj, cons)
-    _=prob.solve()
+    _=prob.solve(solver='MOSEK',verbose=True)
 
     Ave = scs.dok_matrix((Ncells,Ncells),dtype=np.float64)
     Ave[range(Ncells),range(Ncells)] = omega_e.value

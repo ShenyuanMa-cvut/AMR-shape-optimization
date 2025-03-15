@@ -1,3 +1,5 @@
+import time
+
 import dolfinx
 import dolfinx.fem.function
 import ufl
@@ -11,25 +13,6 @@ from AMR_TO.interpolation import averaging_kernel
 
 from utils import generate_mesh
 
-def get_patch_cells(e:int, mesh:dolfinx.mesh.Mesh)->list[int]:
-    """
-        Find the patch of cells surrounding cell e and including e
-    """
-    dim = mesh.topology.dim
-    fdim = dim - 1
-
-    mesh.topology.create_connectivity(dim,fdim)
-    mesh.topology.create_connectivity(fdim,dim)
-
-    c2f = mesh.topology.connectivity(dim,fdim)
-    f2c = mesh.topology.connectivity(fdim,dim)
-    
-    facets = c2f.links(e) #all the facets connected to cell e
-    patch = set()
-    for f in facets:
-        patch.update(f2c.links(f).tolist())
-    return list(patch)
-
 def test_averaging():
     #create a mesh
     mesh0 = generate_mesh([(0.,0.),(1.,0.),(1.,0.5),(0.5,0.5),(0.5,1.),(0.,1.)],[],lc=0.05)
@@ -38,7 +21,7 @@ def test_averaging():
 
     Th = dolfinx.fem.functionspace(mesh0, ('DG',0))
     th = dolfinx.fem.Function(Th)
-    th.x.array[:] = np.random.uniform(0., 1., ncells)
+    th.x.array[:] = np.random.uniform(-1., 1., ncells)
 
     dx = ufl.Measure('dx', mesh0)
     t = ufl.TestFunction(Th)
@@ -51,7 +34,9 @@ def test_averaging():
     assert np.allclose(areas.array*th.x.array, cell_integral.array) # sanity check
     assert np.isclose(integral_th, np.sum(cell_integral.array)) # sanity
 
+    start = time.time()
     Ave = averaging_kernel(mesh0)
+    print(f"Time to construct kernel {time.time()-start}(s) on mesh having {ncells} cells")
 
     th_tilde = dolfinx.fem.Function(Th)
     th_tilde.x.array[:] = Ave.dot(th.x.array)
@@ -59,7 +44,7 @@ def test_averaging():
     integral_th_tilde = dolfinx.fem.assemble_scalar(dolfinx.fem.form(th_tilde*dx))
 
     assert np.all(th_tilde.x.array <= 1.) #the averaging must preserve bounds
-    assert np.all(th_tilde.x.array >= 0.) #the averaging must preserve bounds
+    assert np.all(th_tilde.x.array >= -1.) #the averaging must preserve bounds
     assert np.isclose(integral_th_tilde, integral_th) #the averaging must preserve integral
 
 if __name__ == '__main__':
