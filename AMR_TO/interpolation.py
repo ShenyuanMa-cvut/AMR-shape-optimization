@@ -1,4 +1,6 @@
 import basix.ufl
+import dolfinx.fem.petsc
+import ufl.form
 from ._interpolation_helper import _MeshHelper,_AdjHelper,_quad_interp
 import dolfinx,ufl,basix
 import numpy as np
@@ -137,7 +139,7 @@ def averaging_kernel(mesh:dolfinx.mesh.Mesh)->scs.csc_matrix:
     cons = [p==0 for p in partition_unity]+[p==0 for p in preserve_integral]+[omega_e>=0.]+[omega_f>=0.]
     obj = cvx.Minimize(cvx.norm2(omega_e)**2+cvx.norm2(omega_f.reshape(-1))**2)
     prob = cvx.Problem(obj, cons)
-    _=prob.solve(solver='MOSEK',verbose=True)
+    _=prob.solve(solver=cvx.SCS)
 
     Ave = scs.dok_matrix((Ncells,Ncells),dtype=np.float64)
     Ave[range(Ncells),range(Ncells)] = omega_e.value
@@ -148,3 +150,15 @@ def averaging_kernel(mesh:dolfinx.mesh.Mesh)->scs.csc_matrix:
         Ave[j,i] = omega_f.value[k,1]
     
     return Ave.tocsr()
+
+def riesz_representation(L:ufl.form):
+    """
+        Let L be a linear form defined on a finite element space. Find a function vh in that space such that 
+        <vh,v>=L(v) forall v
+    """
+    v = L.arguments()[0] #get the arguments
+    Vh = v.ufl_function_space()
+    u = ufl.TrialFunction(Vh)
+    dx = ufl.Measure('dx',Vh.mesh)
+    p = dolfinx.fem.petsc.LinearProblem(u*v*dx, L)
+    return p.solve()

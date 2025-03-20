@@ -1,6 +1,6 @@
 # distutils: language=c++
 # cython: language_level=3
-# cython: boundscheck=False,wraparound=False, nonecheck=False
+# cython: boundscheck=False, wraparound=False, nonecheck=False
 
 from libcpp.set cimport set
 from libcpp.iterator cimport insert_iterator
@@ -14,6 +14,7 @@ cdef extern from "<algorithm>" namespace "std" nogil:
 
 from cython.operator cimport dereference as deref, preincrement as inc
 cimport cython
+# from cython.parallel cimport prange
 
 import numpy as np
 cimport numpy as np

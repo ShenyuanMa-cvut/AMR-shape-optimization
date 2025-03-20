@@ -7,7 +7,7 @@ ext = [
         "AMR_TO._interpolation_helper",
         ["AMR_TO/_interpolation_helper.pyx"],
         language="c++",
-        include_dirs=[np.get_include()]
+        include_dirs=[np.get_include()],
     )
 ]
 

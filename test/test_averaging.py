@@ -15,7 +15,7 @@ from utils import generate_mesh
 
 def test_averaging():
     #create a mesh
-    mesh0 = generate_mesh([(0.,0.),(1.,0.),(1.,0.5),(0.5,0.5),(0.5,1.),(0.,1.)],[],lc=0.05)
+    mesh0 = generate_mesh([(0.,0.),(1.,0.),(1.,0.5),(0.5,0.5),(0.5,1.),(0.,1.)],[],lc=0.02)
     dim = mesh0.topology.dim
     ncells = mesh0.topology.index_map(dim).size_local
 

@@ -6,3 +6,4 @@ AMR_TO/*.cpp
 AMR_TO/*.so
 AMR_TO/*.html
 *.prof
+*.lprof
