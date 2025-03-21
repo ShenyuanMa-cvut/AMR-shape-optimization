@@ -1,7 +1,6 @@
 import time
 
 import dolfinx
-import dolfinx.fem.function
 import ufl
 import numpy as np
 
