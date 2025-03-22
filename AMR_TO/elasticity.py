@@ -6,7 +6,7 @@ from dolfinx.fem import petsc
 from mpi4py import MPI
 import numpy as np
 
-from typing import Optional
+from .interpolation import local_quad_interpolation_cy
 
 def _epsilon(v : any ,dim : int):
     """
@@ -18,6 +18,21 @@ def _epsilon(v : any ,dim : int):
     elif dim == 3:
         return ufl.as_vector([e[0,0],e[1,1],e[2,2],np.sqrt(2)*e[0,1],np.sqrt(2)*e[0,2],np.sqrt(2)*e[1,2]])
     
+def _svecT(tau, dim):
+    """
+        Let tau be the stress in engineering notation, return tau in matrix representation
+    """
+    if dim == 2:
+        tau11 = tau.sub(0)
+        tau22 = tau.sub(1)
+        tau12 = tau.sub(2)/np.sqrt(2)
+        return ufl.as_matrix([[tau11,tau12],[tau12,tau22]])
+    elif dim == 3:
+        tau11,tau22,tau33 = tau.sub(0),tau.sub(1),tau.sub(2)
+        tau12,tau13,tau23 = tau.sub(3)/np.sqrt(2),tau.sub(4)/np.sqrt(2),tau.sub(5)/np.sqrt(2)
+
+        return ufl.as_matrix([[tau11,tau12,tau13],[tau12,tau22,tau23],[tau13,tau23,tau33]])
+
 def _interpolate(Vh_to : dolfinx.fem.FunctionSpace, vh_from : dolfinx.fem.Function, match=True) -> dolfinx.fem.Function:
     """
     Interpolate the function vh (in Vh_from) to the function space Vh_to. match is True if Vh_to and Vh_from are defined over the same mesh
@@ -146,4 +161,7 @@ class ElasticitySolver(_AbstractElasticityForm):
             )
         
     def compute_indicator(self):
-        pass
+        Wh = self.Wh #DG0
+        w = ufl.TestFunction(Wh)
+        pi_uh = [local_quad_interpolation_cy(uh) for uh in self.uhs]
+        tauhs_mat = [_svecT(tauh, self.dim) for tauh in self.tauhs]

@@ -9,8 +9,6 @@ import scipy.sparse as scs
 import cvxopt as co
 import mosek
 
-import line_profiler
-
 def local_quad_interpolation_cy(vh:dolfinx.fem.Function):
     """
         Assuming vh to be a ('CG',1) function. Find the th discontinuous ('DG',2) function that locally interpolates vh : 
@@ -120,14 +118,19 @@ def _data_to_kernel(x:co.matrix,mesh:dolfinx.mesh.Mesh):
     A = scs.dok_matrix((ncells,ncells),dtype=np.float64)
     A[range(ncells),range(ncells)] =  list(x[:ncells])
 
-    for k,f in enumerate(int_facets):
-        i,j = f2c.links(f)
-        A[i,j] = x[ncells+2*k]
-        A[j,i] = x[ncells+2*k+1]
+    idx = f2c.offsets[int_facets][:,None]
+    idxx = (f2c.offsets[int_facets+1]-1)[:,None]
+    ij = f2c.array[np.hstack((idx,idxx))]
+    A[ij[:,0],ij[:,1]] = x[ncells::2]
+    A[ij[:,1],ij[:,0]] = x[ncells+1::2]
+
+    # for k,f in enumerate(int_facets):
+    #     i,j = f2c.links(f)
+    #     A[i,j] = x[ncells+2*k]
+    #     A[j,i] = x[ncells+2*k+1]
 
     return A.tocsr()
 
-@line_profiler.profile
 def averaging_kernel(mesh:dolfinx.mesh.Mesh)->scs.csr_matrix:
     """
         Compute an averaging kernel that preserves integral and bounds, using convex optimization

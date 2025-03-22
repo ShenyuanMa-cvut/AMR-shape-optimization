@@ -8,9 +8,12 @@ import cvxpy as cvx
 from functools import reduce
 from itertools import product
 
+import multiprocessing as mp
+from multiprocessing import shared_memory,managers
+
 class Microstructure():
     """
-        Implementation of the optima SDP solution of finte rank laminates that minimizes the complementary energy
+        Implementation of the SDP solution of finte rank laminates that minimizes the complementary energy
     """
     def __init__(self,dim : int, mu : float,lmbda : float,q : int) -> None:
         """
@@ -32,7 +35,7 @@ class Microstructure():
         self._basis = sorted(itermonomials(self._v, 4), key=monomial_key('grlex', self._v[::-1]))[monomial_count(dim,3):] #basis vector 
         
         #CVXPY objects
-        self._c = cvx.Variable(shape=(q,),name='c') #complementary energies
+        self._c = cvx.Variable(shape=((q,)),name='c') #complementary energies
         self._y = cvx.Variable(shape=(len(self._basis,)),name='y') #fourth order moments
         self._tau = [cvx.Parameter(shape=(self.engineer_dim, ), name=f'tau{j}') for j in range(q)] #stress, in engineering notation
         self._weights = cvx.Parameter(shape=(q,), name='w') #manual normalization of the objective
@@ -59,7 +62,7 @@ class Microstructure():
         self._cons.append(self._My >> 0)
         self._cons.append(self._y @ _probability(self._v, self._basis) == 1)
         for i in range(self.q):
-            self._cons.append(cvx.bmat([[self._c[i].reshape((1,1)),self._tau[i].reshape((1,self.engineer_dim))],[self._tau[i].reshape((self.engineer_dim,1)), self._Fy]]) >> 0)
+            self._cons.append(cvx.bmat([[self._c[i].reshape((1,1),'C'),self._tau[i].reshape((1,self.engineer_dim),'C')],[self._tau[i].reshape((self.engineer_dim,1),'C'), self._Fy]]) >> 0)
 
     def compute_microstructure(self, tau : list[np.ndarray], **kwargs) -> tuple[float,np.ndarray,np.ndarray]:
         """
@@ -75,6 +78,70 @@ class Microstructure():
         self._weights.value = w
         sol = self._prob.solve(**kwargs)
         return sol,self._Fy.value,self._My.value
+
+def solve_microstructure_batch(mu, lmbda, taus : list[np.ndarray], dim, ncells, nproc = None):
+    def _work(mu, lmbda, taus_shm_names, gtau_shm_name, FA_shm_name, My_shm_name, dim, start_e, end_e, ncells):
+        q = len(taus_shm_names)
+        solver = Microstructure(dim, mu, lmbda, q)
+        
+        edim = 6 if dim==3 else 3 #engineering dimension
+        taus_shm = [shared_memory.SharedMemory(create=False,name=name) for name in taus_shm_names]
+        taus_shm_nps = [np.ndarray((ncells*edim,), dtype=np.float64, buffer=t_shm.buf) for t_shm in taus_shm]
+
+        gtau_shm = shared_memory.SharedMemory(create=False,name=gtau_shm_name)
+        gtau_shm_np = np.ndarray((ncells,), dtype=np.float64, buffer=gtau_shm.buf)
+
+        FA_shm = shared_memory.SharedMemory(create=False,name=FA_shm_name)
+        FA_shm_np = np.ndarray((ncells,edim,edim), dtype=np.float64, buffer=FA_shm.buf)
+
+        My_shm = shared_memory.SharedMemory(create=False,name=My_shm_name)
+        My_shm_np = np.ndarray((ncells,edim,edim), dtype=np.float64, buffer=My_shm.buf)
+
+        for e in range(start_e, end_e):
+            gtau_shm_np[e], FA_shm_np[e,:,:], My_shm_np[e,:,:] = solver.compute_microstructure([t[e*edim:(e+1)*edim] for t in taus_shm_nps])
+        
+    if nproc is None:  
+        nproc = mp.cpu_count()
+    chunk_size = ncells//nproc
+    float_size = taus[0].itemsize
+    edim = 6 if dim==3 else 3 #engineering dimension
+    
+    with managers.SharedMemoryManager() as smm:
+        #create shared memory from taus
+        taus_shm = [smm.SharedMemory(size=float_size*t.size) for t in taus]
+        taus_shm_names = [t_shm.name for t_shm in taus_shm]
+
+        #write taus into taus_shm
+        for t,tau_in in zip(taus_shm,taus):
+            t_np = np.ndarray(tau_in.shape, dtype=tau_in.dtype, buffer=t.buf)
+            t_np[:] = tau_in[:]
+
+        #prepare shared memory for writing output
+        gtau_shm = smm.SharedMemory(size=float_size*ncells)
+        FA_shm = smm.SharedMemory(size=float_size*ncells*edim*edim)
+        My_shm = smm.SharedMemory(size=float_size*ncells*edim*edim)
+
+        procs = []
+        for i in range(nproc):
+            start_e = i*chunk_size
+            end_e = ncells if i == nproc-1 else (i+1)*chunk_size
+            p = mp.Process(target=_work, 
+                           args=(mu, lmbda, taus_shm_names, gtau_shm.name, FA_shm.name, My_shm.name, dim, start_e, end_e, ncells))
+            p.start()
+            procs.append(p)
+
+        for p in procs:
+            p.join()
+
+        gtau_shm_np = np.ndarray((ncells,), dtype=np.float64, buffer=gtau_shm.buf)
+        FA_shm_np = np.ndarray((ncells,edim,edim), dtype=np.float64, buffer=FA_shm.buf)
+        My_shm_np = np.ndarray((ncells,edim,edim), dtype=np.float64, buffer=My_shm.buf)
+            
+        gtau = gtau_shm_np.copy()
+        FA = FA_shm_np.copy()
+        My = My_shm_np.copy()
+        
+    return gtau, FA, My
 
 def _right_mul(v : sp.Matrix):
     """

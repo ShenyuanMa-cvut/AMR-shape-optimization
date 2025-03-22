@@ -1,5 +1,3 @@
-import time
-
 import dolfinx
 import ufl
 import numpy as np
@@ -33,9 +31,7 @@ def test_averaging():
     assert np.allclose(areas.array*th.x.array, cell_integral.array) # sanity check
     assert np.isclose(integral_th, np.sum(cell_integral.array)) # sanity
 
-    start = time.time()
     Ave = averaging_kernel(mesh0)
-    print(f"Time to construct kernel {time.time()-start}(s) on mesh having {ncells} cells")
 
     th_tilde = dolfinx.fem.Function(Th)
     th_tilde.x.array[:] = Ave.dot(th.x.array)
