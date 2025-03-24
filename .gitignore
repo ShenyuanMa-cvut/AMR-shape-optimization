@@ -7,3 +7,6 @@ AMR_TO/*.so
 AMR_TO/*.html
 *.prof
 *.lprof
+*.vtu
+*.png
+*.pkl

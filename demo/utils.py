@@ -2,6 +2,7 @@ import dolfinx
 import pyvista
 import gmsh
 import numpy as np
+import scipy.optimize as so
 from geometry import is_between
 from mpi4py import MPI
 comm = MPI.COMM_WORLD
@@ -22,7 +23,7 @@ class GmshContext:
         """Finalize gmsh when exiting the context."""
         gmsh.finalize()
 
-def pretty_plot(domain : dolfinx.mesh.Mesh, mark_label = True) -> pyvista.Plotter:
+def pretty_plot(domain : dolfinx.mesh.Mesh, mark_label = True) -> tuple[pyvista.Plotter,pyvista.UnstructuredGrid]:
     """
     Beautiful plot of a mesh
     """
@@ -36,15 +37,13 @@ def pretty_plot(domain : dolfinx.mesh.Mesh, mark_label = True) -> pyvista.Plotte
     num_facet = topology.index_map(fdim).size_local
     num_node = topology.index_map(0).size_local
     
-    pyvista.set_jupyter_backend("static")
-    pyvista.start_xvfb()
     p = pyvista.Plotter()
     
     # Extract topology from mesh and create pyvista mesh
     topology_vtk, cell_types, x = dolfinx.plot.vtk_mesh(domain)
     grid = pyvista.UnstructuredGrid(topology_vtk, cell_types, x)
     
-    actor_0 = p.add_mesh(grid,style="wireframe", color="k")
+    #actor_0 = p.add_mesh(grid,style="wireframe", color="k")
 
     if mark_label:
         # mark nodes
@@ -63,7 +62,7 @@ def pretty_plot(domain : dolfinx.mesh.Mesh, mark_label = True) -> pyvista.Plotte
         labels_cell = [f"{i}" for i in range(num_cell)]
         actor_cell = p.add_point_labels(midpoints,labels_cell,text_color="black",shape=None)
     
-    return p
+    return p,grid
 
 # Hooke's law
 def Hooke(mu,lmbda,d):
@@ -135,3 +134,7 @@ def generate_mesh(geo_points : list[tuple[float]], load_points : list[tuple[floa
 
         domain0,_,_ = dolfinx.io.gmshio.model_to_mesh(gmsh.model, MPI.COMM_WORLD, MPI.COMM_WORLD.Get_rank(), gdim=2)   
     return domain0
+
+def fit_power_law(x,y):
+    popt = so.curve_fit(lambda x,a,b,c : a+b*np.power(x, c), np.array(x), np.array(y), [1.,1.,-1.])[0]
+    return popt

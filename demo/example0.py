@@ -2,22 +2,20 @@ from AMR_TO import elasticity as elas
 from AMR_TO.microstructure import solve_microstructure_batch
 from AMR_TO.interpolation import averaging_kernel
 
-import dolfinx,ufl
-import pyvista
+import ufl
+import dolfinx
 
-import pickle
-from matplotlib import pyplot as plt
 from mpi4py import MPI
 import numpy as np
+from matplotlib import pyplot as plt
 
 from utils import *
 
 def marking(eta,threshold):
     argsort = np.argsort(eta)[::-1]
-    size = argsort.size
-    #eta_sort = eta[argsort]
-    #eta_max = eta_sort[0]
-    return argsort[:int(size*threshold)]
+    eta_sort = eta[argsort]
+    eta_max = eta_sort[0]
+    return argsort[eta_sort >= eta_max*(1-threshold)]
 
 def all_edges(mesh : dolfinx.mesh.Mesh,marked : np.ndarray):
     dim = mesh.topology.dim
@@ -87,13 +85,13 @@ def main():
     itermax = 20
     print(f"Initial mesh has {solver.ncells} cells.")
 
-    history = {'compl':[],'vol':[],'oc':[]}
-    i = 0
-    p = 1.05
-    while solver.ncells <= 2000:
-        print("k : comple vol oc")
+    compl_history = []
+    vol_history = []
+    oc_history = []
 
-        for k in range(itermax+i*10):
+    while solver.ncells <= 15000:
+        print("k : comple vol oc")
+        for k in range(itermax):
             
             #compute microstructures
             tauhs = [tauh.x.array for tauh in solver.tauhs]
@@ -108,39 +106,46 @@ def main():
             compl,vol = solver.solve_all()
             oc = solver.compute_oc(FAinv, l)
             print(f"{k} : {sum(compl)} {vol} {oc}")
+            compl_history.append(sum(compl))
+            vol_history.append(vol)
+            oc_history.append(oc)
 
-            history['compl'].append(sum(compl))
-            history['vol'].append(vol)
-            history['oc'].append(oc)
-
-            if k == 9:
-                #fit a power law to oc
-                k_ = k + 1
-                a,b,c = fit_power_law(range(1,k_+1),history['oc'][-k_:])
-            elif k > 10:
-                if history['oc'][-1] <= a*p:
-                    break
-            
-        eta = solver.compute_indicator(FAinv,l, delta, Ave)
-        mark = marking(eta, 0.1)
-        edges = all_edges(solver.mesh, mark)
-
-        new_mesh,_,_ = dolfinx.mesh.refine(solver.mesh, edges)
+        new_mesh,_,_ = dolfinx.mesh.refine(solver.mesh)
         solver.update_mesh(new_mesh)
         solver.solve_all()
         Ave = averaging_kernel(solver.mesh)
         print(f"Refinement : new mesh has {solver.ncells} cells")
-        i += 1
 
-    #save the final mesh
-    topology_vtk, cell_types, x = dolfinx.plot.vtk_mesh(solver.mesh)
-    grid = pyvista.UnstructuredGrid(topology_vtk, cell_types, x)
+    #Visualize the mesh
+    p,grid = pretty_plot(solver.mesh, mark_label=False)
+
+    #Plot forces
+    arrow_num = 10
+    directions = np.zeros((arrow_num,3))
+    directions[:,1] = -0.1
+
+    center1 = np.zeros((arrow_num,3))
+    center1[:,0] = np.linspace(length/6,length/3,arrow_num)
+
+    center2 = np.zeros((arrow_num,3))
+    center2[:,0] = np.linspace(2*length/3,5*length/6,arrow_num)
+    
+    p.add_arrows(center1,directions,color='red')
+    p.add_arrows(center2,directions,color='blue')
+
+    #visualize data
+
     grid.cell_data['theta'] = solver.thetah.x.array
-    grid.cell_data['h'] = solver.mesh.h(solver.dim, np.arange(solver.ncells))
-    grid.save("final_mesh1.vtu")
+    grid.set_active_scalars('theta')
+    p.add_mesh(grid, cmap='gray', flip_scalars=True)
 
-    plt.plot(history['oc'])
+    p.view_xy()
+    p.show()
+
+
+    plt.plot(compl_history)
+    plt.plot(vol_history)
+    plt.plot(oc_history)
     plt.show()
-
 if __name__ == '__main__':
     main()

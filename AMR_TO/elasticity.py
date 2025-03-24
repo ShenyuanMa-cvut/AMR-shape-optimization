@@ -5,33 +5,36 @@ from dolfinx.fem import petsc
 
 from mpi4py import MPI
 import numpy as np
+import ufl.constant
 
-from .interpolation import local_quad_interpolation_cy
+from .interpolation import local_quad_interpolation_cy,riesz_representation,_cell_areas
 
 def _epsilon(v : any ,dim : int):
     """
     Strain in engineering notation
     """
+    sqrt2 = ufl.sqrt(2)
     e = ufl.sym(ufl.grad(v))
     if dim == 2:
-        return ufl.as_vector([e[0,0],e[1,1],np.sqrt(2)*e[0,1]])
+        return ufl.as_vector([e[0,0],e[1,1],sqrt2*e[0,1]])
     elif dim == 3:
-        return ufl.as_vector([e[0,0],e[1,1],e[2,2],np.sqrt(2)*e[0,1],np.sqrt(2)*e[0,2],np.sqrt(2)*e[1,2]])
+        return ufl.as_vector([e[0,0],e[1,1],e[2,2],sqrt2*e[0,1],sqrt2*e[0,2],sqrt2*e[1,2]])
     
 def _svecT(tau, dim):
     """
         Let tau be the stress in engineering notation, return tau in matrix representation
     """
+    sqrt2 = ufl.sqrt(2)
     if dim == 2:
         tau11 = tau.sub(0)
         tau22 = tau.sub(1)
-        tau12 = tau.sub(2)/np.sqrt(2)
-        return ufl.as_matrix([[tau11,tau12],[tau12,tau22]])
+        tau12 = tau.sub(2)/sqrt2
+        return ufl.as_tensor([[tau11,tau12],[tau12,tau22]])
     elif dim == 3:
         tau11,tau22,tau33 = tau.sub(0),tau.sub(1),tau.sub(2)
-        tau12,tau13,tau23 = tau.sub(3)/np.sqrt(2),tau.sub(4)/np.sqrt(2),tau.sub(5)/np.sqrt(2)
+        tau12,tau13,tau23 = tau.sub(3)/sqrt2,tau.sub(4)/sqrt2,tau.sub(5)/sqrt2
 
-        return ufl.as_matrix([[tau11,tau12,tau13],[tau12,tau22,tau23],[tau13,tau23,tau33]])
+        return ufl.as_tensor([[tau11,tau12,tau13],[tau12,tau22,tau23],[tau13,tau23,tau33]])
 
 def _interpolate(Vh_to : dolfinx.fem.FunctionSpace, vh_from : dolfinx.fem.Function, match=True) -> dolfinx.fem.Function:
     """
@@ -98,6 +101,8 @@ class ElasticitySolver(_AbstractElasticityForm):
         Update or assign for the first time the computation mesh        
         """
         self.mesh = mesh
+        self.cell_areas = _cell_areas(self.mesh)
+        self.ncells = mesh.topology.index_map(self.dim).size_local
 
         self.dx = ufl.Measure('dx',self.mesh)
 
@@ -133,8 +138,7 @@ class ElasticitySolver(_AbstractElasticityForm):
         return compl,dolfinx.fem.assemble_scalar(dolfinx.fem.form(self.thetah*self.dx))
     
     def _build_problems(self):
-        measures = []
-
+        self.measures = []
         self.Lh = []
         self.problems = []
         self.bcsh = []
@@ -146,10 +150,10 @@ class ElasticitySolver(_AbstractElasticityForm):
         for vnl in self.vnlocators:
             facets = dolfinx.mesh.locate_entities_boundary(self.mesh, self.dim-1, vnl)
             facets_tag = dolfinx.mesh.meshtags(self.mesh,self.dim-1,facets,np.ones(len(facets),dtype=np.int32))
-            measures.append(ufl.Measure('ds', domain=self.mesh, subdomain_data=facets_tag))
+            self.measures.append(ufl.Measure('ds', domain=self.mesh, subdomain_data=facets_tag))
 
         v = ufl.TestFunction(self.Vh)
-        for g,ds in zip(self.loads,measures):
+        for g,ds in zip(self.loads,self.measures):
             g_ = dolfinx.fem.Constant(self.mesh,g)
             self.Lh.append(ufl.inner(v,g_)*ds(1))
 
@@ -159,9 +163,73 @@ class ElasticitySolver(_AbstractElasticityForm):
                     self.ah, L, u=uh, bcs=[bc], petsc_options={"ksp_type": "preonly", "pc_type": "lu"}
                 )
             )
+
+    def compute_oc(self, FAinv, l):
+        #Convert FAinv into a function
+        FAinv_h = dolfinx.fem.Function(self.Qh) # same space as Ah
+        FAinv_h.x.array[:] = FAinv.reshape(-1)
+        oc_h = dolfinx.fem.Function(self.Wh)
+
+        gtau= sum(ufl.inner(ufl.dot(FAinv_h,tauh), tauh) for tauh in self.tauhs)
+        oc_expr = dolfinx.fem.Expression(ufl.min_value(1., ufl.sqrt(gtau/l)), self.Wh.element.interpolation_points())
+        oc_h.interpolate(oc_expr)
+
+        return np.dot(self.cell_areas, np.abs(oc_h.x.array-self.thetah.x.array))
         
-    def compute_indicator(self):
-        Wh = self.Wh #DG0
+    def compute_indicator(self, FAinv,l, delta, Ave, sigma=1.):
+        ncells = self.mesh.topology.index_map(self.dim).size_local
+        Wh = self.Wh #DG0 scalar, cell wise constant
         w = ufl.TestFunction(Wh)
-        pi_uh = [local_quad_interpolation_cy(uh) for uh in self.uhs]
+
+        uhs = self.uhs
+        pi_uhs = [local_quad_interpolation_cy(uh) for uh in uhs]
         tauhs_mat = [_svecT(tauh, self.dim) for tauh in self.tauhs]
+        dx = ufl.Measure('dx', self.mesh)
+        dss = self.measures
+        dS = ufl.Measure('dS',self.mesh)
+        n = ufl.FacetNormal(self.mesh)
+
+        # error estimates
+        eta = np.zeros((ncells,))
+
+        # indicators in u
+        for uh,pi_uh,tauh,ds,g in zip(uhs, pi_uhs, tauhs_mat, dss, self.loads):
+            #compute weighting terms
+            omega = ufl.inner(pi_uh-uh,pi_uh-uh)*w*ds(1)
+            omega += ufl.inner(pi_uh('+')-uh,pi_uh('+')-uh)*w('+')*dS
+            omega += ufl.inner(pi_uh('-')-uh,pi_uh('-')-uh)*w('-')*dS
+            omega_np = np.sqrt(dolfinx.fem.assemble_vector(dolfinx.fem.form(omega)).array)
+
+            #compute residuals
+            rho = ufl.inner(ufl.as_vector(g)-ufl.dot(tauh,n),ufl.as_vector(g)-ufl.dot(tauh,n))*w*ds(1)
+            rho += ufl.inner(tauh('+')*n('+')+tauh('-')*n('-'),tauh('+')*n('+')+tauh('-')*n('-'))*(w('+')+w('-'))*dS
+            rho_np = np.sqrt(dolfinx.fem.assemble_vector(dolfinx.fem.form(rho)).array)
+
+            eta += omega_np*rho_np
+        
+        # indicators in theta, first convert FAinv into a function
+        FAinv_h = dolfinx.fem.Function(self.Qh) # same space as Ah
+        FAinv_h.x.array[:] = FAinv.reshape(-1)
+
+        # compute p_theta
+        L = w*l*dx
+        for pi_uh in pi_uhs:
+            eps = _epsilon(pi_uh, self.dim)
+            tau = ufl.dot(self.Ah, eps)
+            L -= w*ufl.inner(ufl.dot(FAinv_h,tau),tau)/self.thetah**2*dx
+        p_theta = riesz_representation(L)
+
+        #compute theta_h_tilde
+        theta_h_tilde = dolfinx.fem.Function(Wh)
+        theta_h_tilde.x.array[:] = np.maximum(delta, np.minimum(1., self.thetah.x.array-sigma*p_theta.x.array))
+
+        #weighting terms:
+        omega_np = 0.5*np.abs(theta_h_tilde.x.array-self.thetah.x.array)
+        rho = w*l*dx
+        for tauh in self.tauhs:
+            rho -= ufl.inner(ufl.dot(FAinv_h,tauh),tauh)/self.thetah**2*w*dx
+        rho_np = np.abs(dolfinx.fem.assemble_vector(dolfinx.fem.form(rho)).array)
+
+        eta += omega_np*rho_np
+
+        return eta
