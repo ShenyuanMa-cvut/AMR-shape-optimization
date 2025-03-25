@@ -159,5 +159,5 @@ def riesz_representation(L:ufl.form):
     Vh = v.ufl_function_space()
     u = ufl.TrialFunction(Vh)
     dx = ufl.Measure('dx',Vh.mesh)
-    p = dolfinx.fem.petsc.LinearProblem(u*v*dx, L)
+    p = dolfinx.fem.petsc.LinearProblem(ufl.inner(u,v)*dx, L)
     return p.solve()

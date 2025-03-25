@@ -8,6 +8,8 @@ import cvxpy as cvx
 from functools import reduce
 from itertools import product
 
+import ufl
+
 import multiprocessing as mp
 from multiprocessing import shared_memory,managers
 
@@ -142,6 +144,14 @@ def solve_microstructure_batch(mu, lmbda, taus : list[np.ndarray], dim, ncells, 
         My = My_shm_np.copy()
         
     return gtau, FA, My
+
+def f_Ac_ufl(dim,mu,lmbda):
+    v = sp.symbols(f'v:{dim}')
+    basis = sorted(itermonomials(v, 4), key=monomial_key('grlex', v[::-1]))[monomial_count(dim,3):]
+    f_Ac_sp = _f_Ac(v, mu, lmbda)
+    f_Ac_coef = _poly_matrix_to_coeffs(f_Ac_sp, v, basis)
+    
+    return f_Ac_coef
 
 def _right_mul(v : sp.Matrix):
     """

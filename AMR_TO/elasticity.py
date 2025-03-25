@@ -8,6 +8,7 @@ import numpy as np
 import ufl.constant
 
 from .interpolation import local_quad_interpolation_cy,riesz_representation,_cell_areas
+from .microstructure import f_Ac_ufl
 
 def _epsilon(v : any ,dim : int):
     """
@@ -176,7 +177,7 @@ class ElasticitySolver(_AbstractElasticityForm):
 
         return np.dot(self.cell_areas, np.abs(oc_h.x.array-self.thetah.x.array))
         
-    def compute_indicator(self, FAinv,l, delta, Ave, sigma=1.):
+    def compute_indicator(self, FAinv,l, delta, mu, lmbda, sigma=1.):
         ncells = self.mesh.topology.index_map(self.dim).size_local
         Wh = self.Wh #DG0 scalar, cell wise constant
         w = ufl.TestFunction(Wh)
@@ -231,5 +232,23 @@ class ElasticitySolver(_AbstractElasticityForm):
         rho_np = np.abs(dolfinx.fem.assemble_vector(dolfinx.fem.form(rho)).array)
 
         eta += omega_np*rho_np
+
+        # indicators in y
+        fA_coefs = f_Ac_ufl(self.dim,mu,lmbda)
+        codim = len(fA_coefs)
+
+        Yh = dolfinx.fem.functionspace(self.mesh, ('DG',0,(codim,)))
+        y = ufl.TestFunction(Yh)
+        
+        fA_fems = [dolfinx.fem.Constant(self.mesh, f) for f in fA_coefs]
+        L = 0
+        for i in range(codim):
+            for pi_uh in pi_uhs:
+                eps = _epsilon(pi_uh, self.dim)
+                tau = ufl.dot(self.Ah, eps)
+                Ftau = ufl.dot(FAinv_h,tau)
+                L -= (1-self.thetah)/self.thetah*y[i]*ufl.inner(ufl.dot(fA_fems[i],Ftau), Ftau)*dx
+
+        py_h = riesz_representation(L)
 
         return eta
