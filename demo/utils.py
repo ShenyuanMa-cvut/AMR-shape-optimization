@@ -136,5 +136,14 @@ def generate_mesh(geo_points : list[tuple[float]], load_points : list[tuple[floa
     return domain0
 
 def fit_power_law(x,y):
-    popt = so.curve_fit(lambda x,a,b,c : a+b*np.power(x, c), np.array(x), np.array(y), [1.,1.,-1.])[0]
+    def func(x,a,b,c):
+        return a+b*np.power(x, c)
+    
+    def jac(x,a,b,c):
+        da = np.ones_like(x)
+        db = np.power(x,c)
+        dc = np.power(x,c)*np.log(x)
+        return np.array([da,db,dc]).T
+
+    popt = so.curve_fit(func, np.array(x), np.array(y), [1.,1.,-1.], jac=jac)[0]
     return popt

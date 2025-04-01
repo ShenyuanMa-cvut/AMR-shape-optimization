@@ -1,22 +1,23 @@
 import pickle
+import sys
+
 from matplotlib import pyplot as plt
 
 import numpy as np
 
-from utils import fit_power_law
-
 def main(*args):
-    with open('data/history_uni_696_11136.pkl', 'rb') as f:
-        history_uni = pickle.load(f)
-    with open('data/history_adaptive_696_21464.pkl','rb') as f:
-        history_amr = pickle.load(f)
+    if len(args) == 1:
+        print('No history data was given')
+        return
 
-    plt.plot(history_amr['oc'],label='oc with AMR')
-    plt.plot(history_uni['oc'],label='oc with Uni Ref')
-    plt.legend()
+    for history_data in args[1:]:
+        with open(history_data, 'rb') as f:
+            history = pickle.load(f)
+        plt.plot(history['oc'])
+        #plt.plot(history['vol'])
+        #plt.plot(np.array(history['compl'])+0.05*np.array(history['vol']))
+
     plt.show()
 
-
-
 if __name__ == '__main__':
-    main()
+    main(*sys.argv)

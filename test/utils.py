@@ -109,8 +109,6 @@ def pretty_plot(mesh : dolfinx.mesh.Mesh, mark_label = True) -> tuple[pyvista.Pl
     num_facet = topology.index_map(fdim).size_local
     num_node = topology.index_map(0).size_local
     
-    pyvista.set_jupyter_backend("static")
-    pyvista.start_xvfb()
     p = pyvista.Plotter()
     
     # Extract topology from mesh and create pyvista mesh

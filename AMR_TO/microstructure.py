@@ -79,10 +79,10 @@ class Microstructure():
 
         self._weights.value = w
         sol = self._prob.solve(**kwargs)
-        return sol,self._Fy.value,self._My.value
+        return sol,self._Fy.value,self._y.value
 
 def solve_microstructure_batch(mu, lmbda, taus : list[np.ndarray], dim, ncells, nproc = None):
-    def _work(mu, lmbda, taus_shm_names, gtau_shm_name, FA_shm_name, My_shm_name, dim, start_e, end_e, ncells):
+    def _work(mu, lmbda, taus_shm_names, gtau_shm_name, FA_shm_name, y_shm_name, dim, start_e, end_e, ncells):
         q = len(taus_shm_names)
         solver = Microstructure(dim, mu, lmbda, q)
         
@@ -96,18 +96,19 @@ def solve_microstructure_batch(mu, lmbda, taus : list[np.ndarray], dim, ncells, 
         FA_shm = shared_memory.SharedMemory(create=False,name=FA_shm_name)
         FA_shm_np = np.ndarray((ncells,edim,edim), dtype=np.float64, buffer=FA_shm.buf)
 
-        My_shm = shared_memory.SharedMemory(create=False,name=My_shm_name)
-        My_shm_np = np.ndarray((ncells,edim,edim), dtype=np.float64, buffer=My_shm.buf)
+        y_shm = shared_memory.SharedMemory(create=False,name=y_shm_name)
+        y_shm_np = np.ndarray((ncells,ydim), dtype=np.float64, buffer=y_shm.buf)
 
         for e in range(start_e, end_e):
-            gtau_shm_np[e], FA_shm_np[e,:,:], My_shm_np[e,:,:] = solver.compute_microstructure([t[e*edim:(e+1)*edim] for t in taus_shm_nps])
+            gtau_shm_np[e], FA_shm_np[e,:,:], y_shm_np[e,:] = solver.compute_microstructure([t[e*edim:(e+1)*edim] for t in taus_shm_nps])
         
     if nproc is None:  
         nproc = mp.cpu_count()
     chunk_size = ncells//nproc
     float_size = taus[0].itemsize
     edim = 6 if dim==3 else 3 #engineering dimension
-    
+    ydim =  monomial_count(dim,4)-monomial_count(dim,3) #number of degree 4 homogeneous monomials
+
     with managers.SharedMemoryManager() as smm:
         #create shared memory from taus
         taus_shm = [smm.SharedMemory(size=float_size*t.size) for t in taus]
@@ -121,14 +122,14 @@ def solve_microstructure_batch(mu, lmbda, taus : list[np.ndarray], dim, ncells, 
         #prepare shared memory for writing output
         gtau_shm = smm.SharedMemory(size=float_size*ncells)
         FA_shm = smm.SharedMemory(size=float_size*ncells*edim*edim)
-        My_shm = smm.SharedMemory(size=float_size*ncells*edim*edim)
+        y_shm = smm.SharedMemory(size=float_size*ncells*ydim)
 
         procs = []
         for i in range(nproc):
             start_e = i*chunk_size
             end_e = ncells if i == nproc-1 else (i+1)*chunk_size
             p = mp.Process(target=_work, 
-                           args=(mu, lmbda, taus_shm_names, gtau_shm.name, FA_shm.name, My_shm.name, dim, start_e, end_e, ncells))
+                           args=(mu, lmbda, taus_shm_names, gtau_shm.name, FA_shm.name, y_shm.name, dim, start_e, end_e, ncells))
             p.start()
             procs.append(p)
 
@@ -137,13 +138,13 @@ def solve_microstructure_batch(mu, lmbda, taus : list[np.ndarray], dim, ncells, 
 
         gtau_shm_np = np.ndarray((ncells,), dtype=np.float64, buffer=gtau_shm.buf)
         FA_shm_np = np.ndarray((ncells,edim,edim), dtype=np.float64, buffer=FA_shm.buf)
-        My_shm_np = np.ndarray((ncells,edim,edim), dtype=np.float64, buffer=My_shm.buf)
+        y_shm_np = np.ndarray((ncells,ydim), dtype=np.float64, buffer=y_shm.buf)
             
         gtau = gtau_shm_np.copy()
         FA = FA_shm_np.copy()
-        My = My_shm_np.copy()
+        y = y_shm_np.copy()
         
-    return gtau, FA, My
+    return gtau, FA, y
 
 def f_Ac_ufl(dim,mu,lmbda):
     v = sp.symbols(f'v:{dim}')

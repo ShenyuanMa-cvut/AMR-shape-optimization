@@ -36,36 +36,41 @@ def main():
 
     # Define the hold all domain (let's work with polygonal domain and just give the coordinates of vertices
     # in counter-clockwise order
-    length,height = 2.,1/3.
-    points = [(0., 0.),(length, 0.),(length, height),(0., height)]
+    length,height = 1.,1.
+    points = [(0., 0.),(length, 0.),(length, height/2),(length/2, height/2),(length/2,height),(0.,height)]
 
     # Define the part of the boundary where loads are applied
-    load_points = [[(length/6,0.),(length/3,0.)],[(2*length/3,0.),(5*length/6,0.)]]
+    load_points = [[(length,height/6),(length,2*height/6)],
+                   [(5*length/6,0.),(length,0.)]]
     load_points_raw = sum(load_points,start=[])
-    lc = .05
+    lc = 0.1
     new_mesh = generate_mesh(points,load_points_raw,lc=lc) #generate a very coarse mesh
+
+    # p,grid = pretty_plot(new_mesh,False)
+    # p.add_mesh(grid,style='wireframe')
+    # p.view_xy()
+    # p.show()
+    # return 
 
     #marker of dirichlet bc
     def dirichlet(x : np.ndarray) -> np.ndarray[bool]:
-        is_left = np.isclose(x[0],0.)
-        #is_right = np.isclose(x[0],length)   
-        return is_left
+        return np.isclose(x[1],height)
 
-    #marker of vn1 bc
+    #right side mid
     def vn1(x : np.ndarray) -> np.ndarray[bool]:
-        is_bottom = np.isclose(x[1],0.)
-        start,end = load_points[0][0][0],load_points[0][1][0]
-        is_seg = np.logical_and(x[0] >= start, x[0] <= end)
-        return is_bottom*is_seg
-
-    #marker of vn2 bc
-    def vn2(x : np.ndarray) -> np.ndarray[bool]:
+        is_right = np.isclose(x[0],length)
+        start,end = load_points[0][0][1],load_points[0][1][1]
+        is_seg = np.logical_and(x[1] >= start, x[1] <= end)
+        return is_right*is_seg
+    
+    #bottom side mid
+    def vn2(x:np.ndarray)->np.ndarray:
         is_bottom = np.isclose(x[1],0.)
         start,end = load_points[1][0][0],load_points[1][1][0]
-        is_seg = np.logical_and(x[0] >= start, x[0] <= end)
+        is_seg = np.logical_and(x[0]>=start,x[0]<=end)
         return is_bottom*is_seg
-
-    g = [np.array([0.,-0.1]),np.array([0.,-0.1])]
+    
+    g = [np.array([-0.1,0.]),np.array([0.,-0.1])]
 
     solver = elas.ElasticitySolver(dim, [dirichlet,dirichlet],[vn1,vn2],g) #intialize the abstract solver
     #update the first mesh
@@ -81,16 +86,16 @@ def main():
     
     compl,vol = solver.solve_all() #initial solve
 
-    l = 5e-1
+    l = .05
     delta = 1e-4
-    itermax = 30
+    itermax = 50
 
     history = {'compl':[],'vol':[],'oc':[]}
     i = 0
     p = 1.05
     ncells = ncells0
 
-    while ncells <= 12000:
+    while ncells <= 15000:
         solver.update_mesh(new_mesh)
         solver.solve_all()
         Ave = averaging_kernel(solver.mesh)
@@ -120,13 +125,14 @@ def main():
             history['vol'].append(vol)
             history['oc'].append(oc)
 
-            if k == 9:
-                #fit a power law to oc
-                k_ = k + 1
-                a,b,c = fit_power_law(range(2,k_+1),history['oc'][-k_+1:])
-            elif k > 10:
-                if history['oc'][-1] <= a*p:
-                    break
+            if i > 0:
+                if k == 9:
+                    #fit a power law to oc
+                    k_ = k + 1
+                    a,b,c = fit_power_law(range(2,k_+1),history['oc'][-k_+1:])
+                elif k > 10:
+                    if history['oc'][-1] <= a*p:
+                        break
 
         eta = solver.compute_indicator(FAinv, y, l, delta, mu, lmbda)
 
@@ -143,10 +149,10 @@ def main():
     grid.cell_data['theta'] = solver.thetah.x.array
     grid.cell_data['h'] = solver.mesh.h(solver.dim, np.arange(solver.ncells))
     grid.cell_data['eta'] = eta
-    grid.save(f"data/final_mesh_{ncells0}_{solver.ncells}.vtu")
+    grid.save(f"data/Lshape_mesh_{ncells0}_{solver.ncells}.vtu")
 
     #save the obj history
-    with open(f"data/history_adaptive_{ncells0}_{solver.ncells}.pkl", "wb") as f:
+    with open(f"data/Lshape_history_{ncells0}_{solver.ncells}.pkl", "wb") as f:
         pickle.dump(history, f)
 
 if __name__ == '__main__':

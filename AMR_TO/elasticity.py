@@ -177,7 +177,7 @@ class ElasticitySolver(_AbstractElasticityForm):
 
         return np.dot(self.cell_areas, np.abs(oc_h.x.array-self.thetah.x.array))
         
-    def compute_indicator(self, FAinv,l, delta, mu, lmbda, sigma=1.):
+    def compute_indicator(self, FAinv, y_np, l, delta, mu, lmbda, sigma=1.):
         ncells = self.mesh.topology.index_map(self.dim).size_local
         Wh = self.Wh #DG0 scalar, cell wise constant
         w = ufl.TestFunction(Wh)
@@ -224,31 +224,42 @@ class ElasticitySolver(_AbstractElasticityForm):
         theta_h_tilde = dolfinx.fem.Function(Wh)
         theta_h_tilde.x.array[:] = np.maximum(delta, np.minimum(1., self.thetah.x.array-sigma*p_theta.x.array))
 
-        #weighting terms:
-        omega_np = 0.5*np.abs(theta_h_tilde.x.array-self.thetah.x.array)
-        rho = w*l*dx
-        for tauh in self.tauhs:
-            rho -= ufl.inner(ufl.dot(FAinv_h,tauh),tauh)/self.thetah**2*w*dx
-        rho_np = np.abs(dolfinx.fem.assemble_vector(dolfinx.fem.form(rho)).array)
+        # #weighting terms:
+        # omega_np = 0.5*np.abs(theta_h_tilde.x.array-self.thetah.x.array)
+        # rho = w*l*dx
+        # for tauh in self.tauhs:
+        #     rho -= ufl.inner(ufl.dot(FAinv_h,tauh),tauh)/self.thetah**2*w*dx
+        # rho_np = np.abs(dolfinx.fem.assemble_vector(dolfinx.fem.form(rho)).array)
 
-        eta += omega_np*rho_np
+        # eta += omega_np*rho_np
+
+        #error estimates
+        rho = l*self.thetah**2
+        for tauh in self.tauhs:
+            rho -= ufl.inner(ufl.dot(FAinv_h,tauh),tauh)
+        rho_np = dolfinx.fem.assemble_vector(dolfinx.fem.form(w*(theta_h_tilde/self.thetah-1.)*rho/self.thetah*dx)).array
+        eta += np.abs(rho_np)
+
 
         # indicators in y
-        fA_coefs = f_Ac_ufl(self.dim,mu,lmbda)
-        codim = len(fA_coefs)
+        # fA_coefs = f_Ac_ufl(self.dim,mu,lmbda)
+        # codim = len(fA_coefs)
 
-        Yh = dolfinx.fem.functionspace(self.mesh, ('DG',0,(codim,)))
-        y = ufl.TestFunction(Yh)
+        # Yh = dolfinx.fem.functionspace(self.mesh, ('DG',0,(codim,)))
+        # y = ufl.TestFunction(Yh)
         
-        fA_fems = [dolfinx.fem.Constant(self.mesh, f) for f in fA_coefs]
-        L = 0
-        for i in range(codim):
-            for pi_uh in pi_uhs:
-                eps = _epsilon(pi_uh, self.dim)
-                tau = ufl.dot(self.Ah, eps)
-                Ftau = ufl.dot(FAinv_h,tau)
-                L -= (1-self.thetah)/self.thetah*y[i]*ufl.inner(ufl.dot(fA_fems[i],Ftau), Ftau)*dx
+        # fA_fems = [dolfinx.fem.Constant(self.mesh, f) for f in fA_coefs]
+        # L = 0
+        # for i in range(codim):
+        #     for pi_uh in pi_uhs:
+        #         eps = _epsilon(pi_uh, self.dim)
+        #         tau = ufl.dot(self.Ah, eps)
+        #         Ftau = ufl.dot(FAinv_h,tau)
+        #         L -= (1-self.thetah)/self.thetah*y[i]*ufl.inner(ufl.dot(fA_fems[i],Ftau), Ftau)*dx
 
-        py_h = riesz_representation(L)
+        # py_h = riesz_representation(L)
+        # py_np = py_h.x.array.reshape((ncells, codim))
+
+        # Projection here
 
         return eta

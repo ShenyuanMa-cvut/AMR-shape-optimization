@@ -48,8 +48,8 @@ def main():
     #marker of dirichlet bc
     def dirichlet(x : np.ndarray) -> np.ndarray[bool]:
         is_left = np.isclose(x[0],0.)
-        is_right = np.isclose(x[0],length)   
-        return np.logical_or(is_left,is_right)
+        #is_right = np.isclose(x[0],length)   
+        return is_left
 
     #marker of vn1 bc
     def vn1(x : np.ndarray) -> np.ndarray[bool]:
@@ -81,7 +81,7 @@ def main():
     
     compl,vol = solver.solve_all() #initial solve
 
-    l = 1e-1
+    l = 5e-1
     delta = 1e-4
     itermax = 100
 
