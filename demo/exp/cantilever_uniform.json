@@ -1,0 +1,35 @@
+{
+    "name":"cantilever_uniform",
+    
+    "geometry":{
+        "points":[[0.0,0.0],
+            [0.5,0.0],
+            [1.0,0.0],
+            [1.5,0.0],
+            [2.0,0.0],
+            [2.0,1.0],
+            [0.0,1.0]],
+        "segments":[[6,0],
+            [1,2],
+            [3,4]],
+        "lc":0.1
+    },
+    
+    "dirichlet":[[0],[0]],
+    
+    "vonNeumann":{
+        "loc":[[1],[2]],
+        "val":[[0.0,-0.1],[0.0,-0.1]]
+    },
+    
+    "material":{"mu":0.5,"lmbda":0.5},
+    
+    "opt_param":{
+        "l":0.5,
+        "delta":1e-3,
+        "inner_itermax":30,
+        "ncells_max":10000,
+        "is_adaptive":false
+    }
+
+}

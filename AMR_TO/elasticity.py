@@ -306,27 +306,18 @@ def _all_edges(mesh : dolfinx.mesh.Mesh,marked : np.ndarray):
     fdim = dim - 1
     return np.unique(dolfinx.mesh.compute_incident_entities(mesh.topology, marked, dim, fdim))
 
-# @dataclass
-# class OptimizationParam():
-#     l : float
-#     delta : float
-#     inner_itermax : int
-#     ncell_max : int
-
 class Optimization():
     """
         Start the compliance minimization by microstructure loop.
     """
     def __init__(self, name : str, solver : ElasticitySolver, 
                 mesh0 : dolfinx.mesh.Mesh, 
-                mu, lmbda, 
-                is_adaptive : bool = False):
+                mu, lmbda):
         """
             Initialize the optimization loops.
             Solver : A fresh ElasticitySolver object
             mesh0 : Initial Mesh
             mu,lmbda : Lame's coefficients
-            is_adaptive : Whether the refinement is adaptive or not
         """
         self.name = name
 
@@ -341,8 +332,6 @@ class Optimization():
         self.A0inv = np.linalg.inv(self.A0)
 
         self.reset_design()
-
-        self.is_adaptive = is_adaptive
 
     def reset_design(self):
         A0 = self.A0
@@ -366,13 +355,15 @@ class Optimization():
             opt_param = {'l':1.,
                 'delta':1e-3,
                 'inner_itermax':30,
-                'ncell_max':1000}
+                'ncell_max':1000,
+                'is_adaptive':False}
 
         if type(opt_param) == dict:
             l = opt_param.get('l',1.)
             delta = opt_param.get('delta',1e-3)
             inner_itermax = opt_param.get('inner_max',30)
             ncell_max = opt_param.get('ncell_max', 1000)
+            is_adaptive = opt_param.get('is_adaptive', False)
 
         if post_action is None:
             post_action = lambda x,y:None
@@ -413,7 +404,7 @@ class Optimization():
                     if self.history['oc'][-1] <= a*p:
                         break
 
-            if self.is_adaptive:
+            if is_adaptive:
                 eta = self.solver.compute_indicator(FAinv, y, l, delta, self.mu, self.lmbda)
                 mark = _marking(eta, 0.1) #first 10% triangles with largest eta
                 edges = _all_edges(self.solver.mesh, mark) #take the union of all edges

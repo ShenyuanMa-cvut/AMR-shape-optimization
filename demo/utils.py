@@ -8,6 +8,10 @@ from mpi4py import MPI
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 
+import json
+
+import AMR_TO.elasticity as elas
+
 class GmshContext:
     """Implement a gmsh context so that I don't forget to finalize the gmsh each time"""
     def __init__(self, args=None):
@@ -95,7 +99,7 @@ def insert_to_loop(pts : tuple[float], loop_pts : list[tuple[float]]) -> int:
                 return -1
             return i+1
     
-def generate_mesh(geo_points : list[tuple[float]], load_points : list[tuple[float]], name= None, lc = None) -> tuple[dolfinx.mesh.Mesh]:
+def generate_mesh(geo_points : list[tuple[float]], name= None, lc = None) -> tuple[dolfinx.mesh.Mesh]:
     """
         Generate the initial mesh.
         geo_points : a list of coordinates of vertices of a polygon without self loop. Ordered in counterclockwise direction.
@@ -109,20 +113,10 @@ def generate_mesh(geo_points : list[tuple[float]], load_points : list[tuple[floa
         # add points of domain definition
         if lc is None: 
             vtx = [gmsh.model.geo.addPoint(*g,0.) for g in geo_points]
-            load_vtx = [gmsh.model.geo.addPoint(*l,0.) for l in load_points]
         else:
             vtx = [gmsh.model.geo.addPoint(*g,0.,lc) for g in geo_points]
-            load_vtx = [gmsh.model.geo.addPoint(*l,0.,lc) for l in load_points]
         
         pts_draw = vtx + [vtx[0]]
-        pts_coord = geo_points + [geo_points[0]]
-        
-        for tag,point in zip(load_vtx, load_points):
-            #for each point (assuming on the boundary) insert it into pts_draw
-            ind = insert_to_loop(point, pts_coord)
-            if ind > 0:
-                pts_draw.insert(ind, tag)
-                pts_coord.insert(ind, point)
 
         lines = [gmsh.model.geo.addLine(pts_draw[i],pts_draw[i+1]) for i in range(len(pts_draw)-1)]
         loop = gmsh.model.geo.addCurveLoop(lines)
@@ -147,3 +141,79 @@ def fit_power_law(x,y):
 
     popt = so.curve_fit(func, np.array(x), np.array(y), [1.,1.,-1.], jac=jac)[0]
     return popt
+
+def exp_parser(filename)->tuple[elas.ElasticitySolver,dolfinx.mesh.Mesh,dict,dict]:
+    """
+        Parse the file provided in filename and return:
+        Elasticity solver
+        initial mesh
+        opt_param
+        material
+    """
+    
+    #load config file
+    with open(filename) as f:
+        exp = json.load(f)
+    
+    #exp name
+    name = exp['name']
+
+    #build mesh
+    points = exp['geometry']['points']
+    segs = exp['geometry']['segments']
+    lc = exp['geometry'].get('lc',None)
+    mesh = generate_mesh(points, name=name,lc=lc)
+
+    #opt_param
+    opt_param = exp["opt_param"]
+
+    #material
+    material = exp["material"]
+
+    return None,mesh,opt_param,material
+
+
+# # Define physical quantities
+# dim = 2
+# fdim = dim - 1
+# edim = 6 if dim == 3 else 3
+
+# kappa = 1 #bulk modulus
+# mu = 0.5 #shear modulus
+# lmbda = kappa-2*mu/dim # Poisson ration
+
+# # Define the hold all domain (let's work with polygonal domain and just give the coordinates of vertices
+# # in counter-clockwise order
+# length,height = 2.,1/3.
+# points = [(0., 0.),(length, 0.),(length, height),(0., height)]
+
+# # Define the part of the boundary where loads are applied
+# load_points = [[(length/6,0.),(length/3,0.)],[(2*length/3,0.),(5*length/6,0.)]]
+# load_points_raw = sum(load_points,start=[])
+# lc = .05
+# mesh0 = generate_mesh(points,load_points_raw,lc=lc) #generate a very coarse mesh
+
+# #marker of dirichlet bc
+# def dirichlet(x : np.ndarray) -> np.ndarray[bool]:
+#     is_left = np.isclose(x[0],0.)
+#     #is_right = np.isclose(x[0],length)   
+#     return is_left
+
+# #marker of vn1 bc
+# def vn1(x : np.ndarray) -> np.ndarray[bool]:
+#     is_bottom = np.isclose(x[1],0.)
+#     start,end = load_points[0][0][0],load_points[0][1][0]
+#     is_seg = np.logical_and(x[0] >= start, x[0] <= end)
+#     return is_bottom*is_seg
+
+# #marker of vn2 bc
+# def vn2(x : np.ndarray) -> np.ndarray[bool]:
+#     is_bottom = np.isclose(x[1],0.)
+#     start,end = load_points[1][0][0],load_points[1][1][0]
+#     is_seg = np.logical_and(x[0] >= start, x[0] <= end)
+#     return is_bottom*is_seg
+
+# g = [np.array([0.,-0.1]),np.array([0.,-0.1])]
+
+# #initialize the abstract solver
+# solver = elas.ElasticitySolver(dim, [dirichlet,dirichlet],[vn1,vn2],g)
