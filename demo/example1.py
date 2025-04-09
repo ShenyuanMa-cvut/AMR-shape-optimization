@@ -22,6 +22,18 @@ def all_edges(mesh : dolfinx.mesh.Mesh,marked : np.ndarray):
     fdim = dim - 1
     return np.unique(dolfinx.mesh.compute_incident_entities(mesh.topology, marked, dim, fdim))
 
+def save_mesh(mesh,filename,cell_data = None):
+    if cell_data is None:
+        cell_data = dict()
+
+    topology_vtk, cell_types, x = dolfinx.plot.vtk_mesh(mesh)
+    grid = pyvista.UnstructuredGrid(topology_vtk, cell_types, x)
+
+    for field,data in cell_data.items():
+        grid.cell_data[field] = data
+    
+    grid.save(filename)
+
 def main():
     # Define physical quantities
     dim = 2
@@ -44,6 +56,9 @@ def main():
     load_points_raw = sum(load_points,start=[])
     lc = .05
     new_mesh = generate_mesh(points,load_points_raw,lc=lc) #generate a very coarse mesh
+    ncells0 = new_mesh.topology.index_map(dim).size_local
+    
+    save_mesh(new_mesh, f"data/init_mesh_{ncells0}.vtu")
 
     #marker of dirichlet bc
     def dirichlet(x : np.ndarray) -> np.ndarray[bool]:
@@ -73,7 +88,7 @@ def main():
     Ave = averaging_kernel(new_mesh)
 
     #initialize the design
-    ncells0 = new_mesh.topology.index_map(dim).size_local
+
     A0h = np.zeros((ncells0,edim,edim))
     A0h[:] = A0[None,:,:]
     solver.Ah.x.array[:] = A0h.reshape(-1)
@@ -138,12 +153,16 @@ def main():
         i += 1
 
     #save the final mesh
-    topology_vtk, cell_types, x = dolfinx.plot.vtk_mesh(solver.mesh)
-    grid = pyvista.UnstructuredGrid(topology_vtk, cell_types, x)
-    grid.cell_data['theta'] = solver.thetah.x.array
-    grid.cell_data['h'] = solver.mesh.h(solver.dim, np.arange(solver.ncells))
-    grid.cell_data['eta'] = eta
-    grid.save(f"data/final_mesh_{ncells0}_{solver.ncells}.vtu")
+    save_mesh(solver.mesh, f"data/final_mesh_{ncells0}_{solver.ncells}.vtu", cell_data={
+        'theta':solver.thetah.x.array,'h':solver.mesh.h(solver.dim, np.arange(solver.ncells)),'eta':eta
+    })
+
+    # topology_vtk, cell_types, x = dolfinx.plot.vtk_mesh(solver.mesh)
+    # grid = pyvista.UnstructuredGrid(topology_vtk, cell_types, x)
+    # grid.cell_data['theta'] = solver.thetah.x.array
+    # grid.cell_data['h'] = solver.mesh.h(solver.dim, np.arange(solver.ncells))
+    # grid.cell_data['eta'] = eta
+    # grid.save(f"data/final_mesh_{ncells0}_{solver.ncells}.vtu")
 
     #save the obj history
     with open(f"data/history_adaptive_{ncells0}_{solver.ncells}.pkl", "wb") as f:

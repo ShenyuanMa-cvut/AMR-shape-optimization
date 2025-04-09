@@ -146,6 +146,18 @@ def solve_microstructure_batch(mu, lmbda, taus : list[np.ndarray], dim, ncells, 
         
     return gtau, FA, y
 
+def prob(dim):
+    v = sp.symbols(f'v:{dim}')
+    basis = sorted(itermonomials(v, 4), key=monomial_key('grlex', v[::-1]))[monomial_count(dim,3):]
+    return _probability(v, basis)
+
+def moment_mat(dim):
+    v = sp.symbols(f'v:{dim}')
+    basis = sorted(itermonomials(v, 4), key=monomial_key('grlex', v[::-1]))[monomial_count(dim,3):]
+    moment_mat_sp = _moment_matrix(dim, v)
+    moment_mat_nps = _poly_matrix_to_coeffs(moment_mat_sp, v, basis)
+    return moment_mat_nps
+
 def f_Ac_ufl(dim,mu,lmbda):
     v = sp.symbols(f'v:{dim}')
     basis = sorted(itermonomials(v, 4), key=monomial_key('grlex', v[::-1]))[monomial_count(dim,3):]

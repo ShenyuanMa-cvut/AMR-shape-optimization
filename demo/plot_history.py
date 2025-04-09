@@ -13,9 +13,9 @@ def main(*args):
     for history_data in args[1:]:
         with open(history_data, 'rb') as f:
             history = pickle.load(f)
-        plt.plot(history['oc'])
-        #plt.plot(history['vol'])
-        #plt.plot(np.array(history['compl'])+0.05*np.array(history['vol']))
+        #plt.plot(history['oc'])
+        plt.plot(history['vol'])
+        #plt.plot(np.array(history['compl']))
 
     plt.show()
 
