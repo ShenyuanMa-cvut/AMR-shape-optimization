@@ -15,38 +15,19 @@ The user can either construct `ElasticitySolver` by themself or use a simple par
 ```json
 {
     "name":"cantilever_uniform",
+
     "geometry":{
         "points":[[0.0,0.0],[1.0,0.0],...], 
-            // provide a list of points : a list of list of two floats
-            // the list of points are the points of the boundary
-            // we guarantee that the initial mesh have those points as nodes
-            // only polygonal domain is available so the points are boundary points in 
-            // counterclockwise order
         "segments":[[0,1],[1,2],...],
-            // mark a list of segments : a list of list of two integers
-            // any inner list marks two consecutive points of the boundary
-            // homogeneous Dirichlet condition and von Neumann conditions 
-            // can only be imposed on marked segments
         "lc":0.1
-            // density of the initial mesh
     },
+
     "dirichlet":[[0,3,4],[1,2]],
-        // provide a list of list of integers,
-        // any list of integers marks the union of segments,
-        // where the Dirichlet BCs are imposed for each load case.
-        // for example [[0,3,4],[1,2]] implies that there are two load cases and 
-        // first load case has Dirichlet BC over the union of segments 0,3,4
-        // the number of Dirichlet BC must be the same as number of VN Bc 
-    "vonNeumann":{"loc":[[5,7],[6]],
-            // provide a list of list of integers,
-            // any list of integers marks the union of segments,
-            // where the vonNeumann BCs are imposed.
-            // here we have two load cases and the first one
-            // has von Neumann located at segment 5 and 7
-            "val":[[0.0,0.1],[0.0,0.1]]},
-            // list of list of floats, 
-            // representing the value of the corresponding vonNeumann bc
-            // only constant VN BC is supported by the parser
+
+    "vonNeumann":{
+        "loc":[[5,7],[6]],
+        "val":[[0.0,0.1],[0.0,0.1]]
+    },
     
     "material":{"mu":0.5,"lmbda":0.5},
     
@@ -59,3 +40,17 @@ The user can either construct `ElasticitySolver` by themself or use a simple par
     }
 }
 ```
+
+- `name` : this field contains the name of the experiments
+- `geometry` : this field describes the geometry of the domain, assumed to be a polygonal domain without self intersection.
+    - `points` : a list of list of two floats, which are the coordinates of the points thare are present on the boundary of the polygonal domain. The polygonal domain will be drawn by connecting the points in this field in counterclockwise order
+    - `segments` : list of list of two integers, this field marks some segments connecting two points of the boundary. If point `i` and `j` are connected then it is assumed that the segment connecting them are part of the boundary.
+    - `lc` : float for the density of the cells for initial mesh
+- `dirichlet` : list of list of integers. Any inner list of integers marks the union of segments, where the homogeneous Dirichlet BC in prescribed for the corresponding load case. For example `[[0,3,4],[1,2]]` implies that there are two load cases and the first load case has Dirichlet BC over the union of segments 0,3,4. The number of Dirichlet BC must match with the number of VN BC
+- `vonNeumann` : this field describes the BC of the load cases.
+    - `loc` : list of list of integers and represents the location of the vonNeumann BCs. Similar to `dirichlet`.
+    - `val` : list of list of two floats and represents the value of the corresponding VN BC.
+- `material` : material property with field `mu` and `lmbda`.
+- `opt_param` : parameter of the optimization loops.
+
+
